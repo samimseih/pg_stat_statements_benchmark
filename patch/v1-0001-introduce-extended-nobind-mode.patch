@@ -1,0 +1,57 @@
+From 42bd64d9a50266fb4f3445b93341ad84c5491586 Mon Sep 17 00:00:00 2001
+From: Sami Imseih <samimseih@gmail.com>
+Date: Fri, 29 May 2026 16:02:05 +0000
+Subject: [PATCH v1 1/1] introduce extended-nobind mode
+
+---
+ src/bin/pgbench/pgbench.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/bin/pgbench/pgbench.c b/src/bin/pgbench/pgbench.c
+index 0b2bb9340b5..f620de443c4 100644
+--- a/src/bin/pgbench/pgbench.c
++++ b/src/bin/pgbench/pgbench.c
+@@ -715,12 +715,13 @@ typedef enum QueryMode
+ {
+ 	QUERY_SIMPLE,				/* simple query */
+ 	QUERY_EXTENDED,				/* extended query */
++	QUERY_EXTENDED_NOBIND,		/* extended query, variables inlined into text */
+ 	QUERY_PREPARED,				/* extended query with prepared statements */
+ 	NUM_QUERYMODE
+ } QueryMode;
+
+ static QueryMode querymode = QUERY_SIMPLE;
+-static const char *const QUERYMODE[] = {"simple", "extended", "prepared"};
++static const char *const QUERYMODE[] = {"simple", "extended", "extended-nobind", "prepared"};
+
+ /*
+  * struct Command represents one command in a script.
+@@ -3175,6 +3176,18 @@ sendCommand(CState *st, Command *command)
+ 		r = PQsendQueryParams(st->con, sql, command->argc - 1,
+ 							  NULL, params, NULL, NULL, 0);
+ 	}
++	else if (querymode == QUERY_EXTENDED_NOBIND)
++	{
++		char	   *sql;
++
++		sql = pg_strdup(command->argv[0]);
++		sql = assignVariables(&st->variables, sql);
++
++		pg_log_debug("client %d sending %s", st->id, sql);
++		r = PQsendQueryParams(st->con, sql, 0,
++							  NULL, NULL, NULL, NULL, 0);
++		free(sql);
++	}
+ 	else if (querymode == QUERY_PREPARED)
+ 	{
+ 		const char *params[MAX_ARGS];
+@@ -5714,6 +5727,7 @@ postprocess_sql_command(Command *my_command)
+ 	switch (querymode)
+ 	{
+ 		case QUERY_SIMPLE:
++		case QUERY_EXTENDED_NOBIND:
+ 			my_command->argv[0] = my_command->lines.data;
+ 			my_command->argc++;
+ 			break;
+--
+2.50.1

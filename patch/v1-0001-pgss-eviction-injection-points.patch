@@ -1,0 +1,88 @@
+diff --git a/contrib/pg_stat_statements/pg_stat_statements.c b/contrib/pg_stat_statements/pg_stat_statements.c
+index c0060553390..9b21eb1376c 100644
+--- a/contrib/pg_stat_statements/pg_stat_statements.c
++++ b/contrib/pg_stat_statements/pg_stat_statements.c
+@@ -77,6 +77,7 @@
+ #include "utils/guc.h"
+ #include "utils/numeric.h"
+ #include "utils/pgstat_internal.h"
++#include "utils/injection_point.h"
+ #include "utils/timestamp.h"
+ #include "utils/tuplestore.h"
+ 
+@@ -940,15 +941,7 @@ pgss_store(const char *query, int64 queryId,
+ 		{
+ 			dsa_pointer dp;
+ 
+-			/*
+-			 * Initialize refcount.  Entries created during planning (jstate
+-			 * != NULL, kind == PGSS_INVALID) get a higher initial refcount to
+-			 * protect them from eviction before they have a chance to execute
+-			 * and record counters.
+-			 */
+-			pg_atomic_init_u32(&dsh_entry->refcount,
+-							   (jstate && kind == PGSS_INVALID) ?
+-							   PGSS_REF_CAP / 2 : 1);
++			pg_atomic_init_u32(&dsh_entry->refcount, 1);
+ 			dsh_entry->stats_since = GetCurrentTimestamp();
+ 			dsh_entry->minmax_stats_since = dsh_entry->stats_since;
+ 
+@@ -979,6 +972,16 @@ pgss_store(const char *query, int64 queryId,
+ 
+ 			dshash_release_lock(pgss_hash, dsh_entry);
+ 
++			{
++				char		buf[128];
++
++				snprintf(buf, sizeof(buf),
++						 "queryid=" INT64_FORMAT " refcount=%u",
++						 key.queryid,
++						 pg_atomic_read_u32(&dsh_entry->refcount));
++				INJECTION_POINT("pgss-eviction-created", buf);
++			}
++
+ 			pg_atomic_fetch_add_u64(&pgss_shared->nentries, 1);
+ 			entry_dealloc();
+ 
+@@ -1949,11 +1952,41 @@ entry_dealloc(void)
+ 		cur = pg_atomic_read_u32(&entry->refcount);
+ 		if (cur > 0)
+ 		{
++			char		buf[256];
++			int64		total_calls = 0;
++			bool		may_free;
++			pgssCounters *counters;
++
++			counters = (pgssCounters *)
++				pgstat_fetch_entry(PGSTAT_KIND_PGSS, entry->key.dbid,
++								   pgss_hash_key(&entry->key), &may_free);
++			if (counters)
++			{
++				total_calls = counters->calls[PGSS_EXEC] +
++					counters->calls[PGSS_PLAN];
++				if (may_free)
++					pfree(counters);
++			}
++
++			snprintf(buf, sizeof(buf),
++					 "queryid=" INT64_FORMAT " refcount=%u calls=" INT64_FORMAT,
++					 entry->key.queryid, cur, total_calls);
++			INJECTION_POINT("pgss-eviction-decay", buf);
++
+ 			pg_atomic_write_u32(&entry->refcount, cur - 1);
+ 			if (cur - 1 > 0)
+ 				continue;
+ 		}
+ 
++		{
++			char		buf[128];
++
++			snprintf(buf, sizeof(buf),
++					 "queryid=" INT64_FORMAT " refcount=%u",
++					 entry->key.queryid, cur);
++			INJECTION_POINT("pgss-eviction-evicted", buf);
++		}
++
+ 		/* Free the DSA query text before evicting */
+ 		if (DsaPointerIsValid(entry->query_text))
+ 			dsa_free(pgss_qtext_dsa, entry->query_text);
