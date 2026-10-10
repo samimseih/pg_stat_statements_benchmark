@@ -71,6 +71,15 @@ From this directory:
 ./run_pgss_benchmark_suite.sh
 ```
 
+To run it in the background inside `tmux`:
+
+```sh
+./start_pgss_benchmark_suite.sh
+```
+
+The background runner writes to `suite.tmux.log` and uses the `pgss_bench`
+tmux session by default.
+
 Useful overrides:
 
 ```sh
