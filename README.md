@@ -43,7 +43,7 @@ Workloads:
   10% choose from 100000000 unpopular IDs. Duration: 60 seconds.
 - `hotcold_1500`: 90% choose from 4000 popular query texts, 10% choose from
   1500 unpopular IDs. Duration: 60 seconds.
-- `select_only`: pgbench `-S` after `pgbench -i -s 100`. Duration: 120
+- `select_only`: pgbench `-S` after `pgbench -i -s 10`. Duration: 120
   seconds.
 
 The hot/cold workloads use query names like `CTEPOP_123` and `CTEUNPOP_456`
