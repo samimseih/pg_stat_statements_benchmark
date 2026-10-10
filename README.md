@@ -169,3 +169,19 @@ max_qtext_dsa_size  max_qtext_count  max_qtext_total_len  outdir
 
 The raw logs are kept so the run can be inspected later without rerunning the
 suite.
+
+## Report
+
+Generate a Markdown report from a completed result directory:
+
+```sh
+./report_pgss_benchmark.sh results/<timestamp> > report.md
+```
+
+If no result directory is passed, the newest `results/<timestamp>` directory is
+used.  The report starts with a short summary, then prints run metadata,
+per-workload throughput tables, retention tables, query-text/churn counters,
+and wait-event summaries.  It labels the first commit in `summary.tsv` as
+`patched` and the second as `baseline`, and does not look up or print commit
+subjects.  The wait-event `cpu/no wait` column is active backends with no
+PostgreSQL wait event reported; it is not sampled from OS CPU counters.

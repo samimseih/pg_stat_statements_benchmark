@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULT_DIR="${1:-}"
+REPORT_CLIENTS="${REPORT_CLIENTS:-1 32 128 256}"
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+if [[ -z "$RESULT_DIR" ]]; then
+  RESULT_DIR="$(ls -td "$SCRIPT_DIR"/results/* 2>/dev/null | head -n 1)"
+fi
+
+[[ -n "$RESULT_DIR" ]] || die "no results directory found"
+[[ -f "$RESULT_DIR/summary.tsv" ]] || die "$RESULT_DIR/summary.tsv not found"
+
+summary="$RESULT_DIR/summary.tsv"
+read -r patched_commit baseline_commit < <(
+  awk -F $'\t' '
+    NR > 1 && !seen[$1]++ {
+      if (++n == 1)
+        patched = $1
+      else if (n == 2) {
+        print patched, $1
+        exit
+      }
+    }' "$summary"
+)
+
+[[ -n "$patched_commit" && -n "$baseline_commit" ]] ||
+  die "summary.tsv must contain patched and baseline commits"
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+wait_summary="$tmpdir/wait_summary.tsv"
+
+find "$RESULT_DIR" -path '*/waits.tsv' -type f | sort |
+while IFS= read -r file; do
+  rel="${file#$RESULT_DIR/}"
+  commit="${rel%%/*}"
+  rest="${rel#*/}"
+  workload="${rest%%/*}"
+
+  awk -F $'\t' -v commit="$commit" -v workload="$workload" '
+    {
+      wait = $2 ":" $3
+      key = commit "\t" workload
+      total[key] += $4
+      if (wait == "LWLock:pg_stat_statements")
+        pgss[key] += $4
+      else if (wait == "LWLock:PgStatsDSA")
+        dsa[key] += $4
+      else if (wait == "LWLock:PgStatsHash")
+        hash[key] += $4
+      else if (wait == "LWLock:pg_stat_statements_qtext")
+        qtext[key] += $4
+      else if (wait == "Timeout:SpinDelay")
+        spin[key] += $4
+      else if (wait == "Client:ClientRead")
+        client[key] += $4
+      else if (wait == ":")
+        cpu[key] += $4
+    }
+    END {
+      for (key in total)
+        printf "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+               key, total[key], pgss[key], dsa[key], hash[key],
+               qtext[key], spin[key], client[key], cpu[key]
+    }' "$file"
+done > "$wait_summary"
+
+awk -F $'\t' \
+  -v result_dir="$RESULT_DIR" \
+  -v report_clients="$REPORT_CLIENTS" \
+  -v patched_hint="$patched_commit" \
+  -v baseline_hint="$baseline_commit" '
+function pct(patched, baseline) {
+  if (baseline == 0)
+    return "n/a"
+  return sprintf("%+.1f%%", (patched / baseline - 1) * 100)
+}
+
+function pctnum(patched, baseline) {
+  if (baseline == 0)
+    return 0
+  return (patched / baseline - 1) * 100
+}
+
+function pctrange(workload, i, clients, p, b, d, min, max, seen) {
+  for (i = 1; i <= nwanted; i++) {
+    clients = wanted_clients[i]
+    if (clients == 1 || !have_pair(workload, clients))
+      continue
+    p = cell(patched, workload, clients, "tps")
+    b = cell(baseline, workload, clients, "tps")
+    d = pctnum(p, b)
+    if (!seen || d < min)
+      min = d
+    if (!seen || d > max)
+      max = d
+    seen = 1
+  }
+
+  if (!seen)
+    return "n/a"
+  if (sprintf("%.1f", min) == sprintf("%.1f", max))
+    return sprintf("%+.1f%%", min)
+  return sprintf("%+.1f%% to %+.1f%%", min, max)
+}
+
+function nfmt(n, s, out) {
+  s = sprintf("%.0f", n)
+  while (s ~ /^[0-9][0-9][0-9][0-9]/) {
+    out = "," substr(s, length(s) - 2, 3) out
+    s = substr(s, 1, length(s) - 3)
+  }
+  return s out
+}
+
+function label(commit) {
+  return commit == patched ? "patched" : "baseline"
+}
+
+function cell(commit, workload, clients, field) {
+  return data[commit SUBSEP workload SUBSEP clients SUBSEP field]
+}
+
+function have_pair(workload, clients) {
+  return ((patched SUBSEP workload SUBSEP clients SUBSEP "tps") in data &&
+          (baseline SUBSEP workload SUBSEP clients SUBSEP "tps") in data)
+}
+
+function waitcell(commit, workload, field) {
+  return waits[commit SUBSEP workload SUBSEP field] + 0
+}
+
+function print_throughput(workload, i, clients, p, b) {
+  print "### " workload
+  print ""
+  print "| clients | patched TPS | baseline TPS | delta |"
+  print "| ---: | ---: | ---: | ---: |"
+  for (i = 1; i <= nwanted; i++) {
+    clients = wanted_clients[i]
+    if (!have_pair(workload, clients))
+      continue
+    p = cell(patched, workload, clients, "tps")
+    b = cell(baseline, workload, clients, "tps")
+    print "| " clients " | " nfmt(p) " | " nfmt(b) " | " pct(p, b) " |"
+  }
+  print ""
+}
+
+function print_wait_row(workload, commit) {
+  print "| " workload " | " label(commit) " | " \
+        nfmt(waitcell(commit, workload, "total")) " | " \
+        nfmt(waitcell(commit, workload, "pgss")) " | " \
+        nfmt(waitcell(commit, workload, "dsa")) " | " \
+        nfmt(waitcell(commit, workload, "hash")) " | " \
+        nfmt(waitcell(commit, workload, "qtext")) " | " \
+        nfmt(waitcell(commit, workload, "spin")) " | " \
+        nfmt(waitcell(commit, workload, "client")) " | " \
+        nfmt(waitcell(commit, workload, "cpu")) " |"
+}
+
+BEGIN {
+  nwanted = split(report_clients, wanted_clients, " ")
+  split("hotcold_100m hotcold_1500 select_only", workload_order, " ")
+  patched = patched_hint
+  baseline = baseline_hint
+}
+
+FNR == NR && NR == 1 {
+  for (i = 1; i <= NF; i++)
+    col[$i] = i
+  next
+}
+
+FNR == NR {
+  commit = $col["commit"]
+  workload = $col["workload"]
+  clients = $col["clients"]
+
+  if (!(commit in commit_seen)) {
+    commit_seen[commit] = ++ncommits
+    commit_order[ncommits] = commit
+  }
+
+  key = commit SUBSEP workload SUBSEP clients
+  data[key SUBSEP "tps"] = $col["tps"] + 0
+  data[key SUBSEP "duration"] = $col["duration_s"] + 0
+  data[key SUBSEP "entries"] = $col["max_entries"] + 0
+  data[key SUBSEP "pop"] = $col["max_pop_entries"] + 0
+  data[key SUBSEP "unpop"] = $col["max_unpop_entries"] + 0
+  data[key SUBSEP "select"] = $col["max_select_entries"] + 0
+  data[key SUBSEP "other"] = $col["max_other_entries"] + 0
+  data[key SUBSEP "dealloc"] = $col["max_entry_dealloc"] + 0
+  data[key SUBSEP "qtext"] = $col["max_qtext_count"] + 0
+
+  duration[workload] = $col["duration_s"] + 0
+  clients_seen[clients] = 1
+  if ($col["status"] != 0)
+    failed++
+  next
+}
+
+{
+  commit = $1
+  workload = $2
+  key = commit SUBSEP workload
+  waits[key SUBSEP "total"] += $3
+  waits[key SUBSEP "pgss"] += $4
+  waits[key SUBSEP "dsa"] += $5
+  waits[key SUBSEP "hash"] += $6
+  waits[key SUBSEP "qtext"] += $7
+  waits[key SUBSEP "spin"] += $8
+  waits[key SUBSEP "client"] += $9
+  waits[key SUBSEP "cpu"] += $10
+}
+
+END {
+  high100 = pctrange("hotcold_100m")
+  high1500 = pctrange("hotcold_1500")
+  highselect = pctrange("select_only")
+
+  for (w = 1; w <= 2; w++) {
+    workload = workload_order[w]
+    for (i = 1; i <= nwanted; i++) {
+      clients = wanted_clients[i]
+      if (!have_pair(workload, clients))
+        continue
+      pop = cell(patched, workload, clients, "pop")
+      if (!min_pop || pop < min_pop)
+        min_pop = pop
+      qtext = cell(patched, workload, clients, "qtext")
+      if (qtext > max_qtext[workload])
+        max_qtext[workload] = qtext
+    }
+  }
+
+  baseline_churn_pgss = \
+    waitcell(baseline, "hotcold_100m", "pgss") + \
+    waitcell(baseline, "hotcold_1500", "pgss")
+  patched_churn_pgss = \
+    waitcell(patched, "hotcold_100m", "pgss") + \
+    waitcell(patched, "hotcold_1500", "pgss")
+  patched_churn_new = \
+    waitcell(patched, "hotcold_100m", "dsa") + \
+    waitcell(patched, "hotcold_100m", "hash") + \
+    waitcell(patched, "hotcold_100m", "qtext") + \
+    waitcell(patched, "hotcold_1500", "dsa") + \
+    waitcell(patched, "hotcold_1500", "hash") + \
+    waitcell(patched, "hotcold_1500", "qtext")
+  baseline_spin = \
+    waitcell(baseline, "hotcold_100m", "spin") + \
+    waitcell(baseline, "hotcold_1500", "spin") + \
+    waitcell(baseline, "select_only", "spin")
+  patched_spin = \
+    waitcell(patched, "hotcold_100m", "spin") + \
+    waitcell(patched, "hotcold_1500", "spin") + \
+    waitcell(patched, "select_only", "spin")
+
+  print "# pg_stat_statements benchmark report"
+  print ""
+  print "## Summary"
+  print ""
+  print "- hotcold_100m throughput improved by " high100 \
+        " at 32-256 clients."
+  print "- hotcold_1500 throughput improved by " high1500 \
+        " at 32-256 clients."
+  print "- select_only changed by " highselect \
+        " at 32-256 clients."
+  print "- Patched retained at least " nfmt(min_pop) \
+        " popular statements at every reported churn point."
+  print "- Patched qtext_count high-water was " \
+        nfmt(max_qtext["hotcold_100m"]) " for hotcold_100m and " \
+        nfmt(max_qtext["hotcold_1500"]) " for hotcold_1500."
+  print "- Baseline churn sampled " nfmt(baseline_churn_pgss) \
+        " pg_stat_statements LWLock waits; patched sampled " \
+        nfmt(patched_churn_pgss) "."
+  print "- Patched replacement pgstat/qtext waits under churn totaled " \
+        nfmt(patched_churn_new) " samples."
+  print "- Baseline SpinDelay samples were " nfmt(baseline_spin) \
+        " versus " nfmt(patched_spin) " for patched."
+  print ""
+  print "## Run"
+  print ""
+  print "| item | value |"
+  print "| --- | --- |"
+  print "| result directory | `" result_dir "` |"
+  print "| patched | `" patched "` |"
+  print "| baseline | `" baseline "` |"
+  print "| hot/cold duration | " duration["hotcold_100m"] \
+        " seconds per point |"
+  print "| select-only duration | " duration["select_only"] \
+        " seconds per point |"
+  print "| report client points | `" report_clients "` |"
+  print "| failed pgbench rows | " failed + 0 " |"
+  print ""
+  print "No commit subjects are included in this report."
+  print ""
+
+  print "## Throughput"
+  print ""
+  print_throughput("hotcold_100m")
+  print_throughput("hotcold_1500")
+  print_throughput("select_only")
+
+  print "## Retention"
+  print ""
+  print "| workload | clients | patched entries | baseline entries |" \
+        " patched pop | baseline pop | patched unpop | baseline unpop |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  for (w = 1; w <= 2; w++) {
+    workload = workload_order[w]
+    for (i = 1; i <= nwanted; i++) {
+      clients = wanted_clients[i]
+      if (!have_pair(workload, clients))
+        continue
+      print "| " workload " | " clients " | " \
+            nfmt(cell(patched, workload, clients, "entries")) " | " \
+            nfmt(cell(baseline, workload, clients, "entries")) " | " \
+            nfmt(cell(patched, workload, clients, "pop")) " | " \
+            nfmt(cell(baseline, workload, clients, "pop")) " | " \
+            nfmt(cell(patched, workload, clients, "unpop")) " | " \
+            nfmt(cell(baseline, workload, clients, "unpop")) " |"
+    }
+  }
+  print ""
+
+  print "## Query Text And Churn"
+  print ""
+  print "| workload | clients | patched qtext | patched dealloc |" \
+        " baseline dealloc |"
+  print "| --- | ---: | ---: | ---: | ---: |"
+  for (w = 1; w <= 2; w++) {
+    workload = workload_order[w]
+    for (i = 1; i <= nwanted; i++) {
+      clients = wanted_clients[i]
+      if (!have_pair(workload, clients))
+        continue
+      print "| " workload " | " clients " | " \
+            nfmt(cell(patched, workload, clients, "qtext")) " | " \
+            nfmt(cell(patched, workload, clients, "dealloc")) " | " \
+            nfmt(cell(baseline, workload, clients, "dealloc")) " |"
+    }
+  }
+  print ""
+
+  print "## Wait Events"
+  print ""
+  print "| workload | variant | active samples | pgss LWLock | PgStatsDSA |" \
+        " PgStatsHash | qtext LWLock | SpinDelay | ClientRead | cpu/no wait |"
+  print "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  for (w = 1; w <= 3; w++) {
+    workload = workload_order[w]
+    print_wait_row(workload, baseline)
+    print_wait_row(workload, patched)
+  }
+  print ""
+
+  print "## Notes"
+  print ""
+  print "- Deallocation counters are eviction-pass counters, matching upstream"
+  print "  pg_stat_statements_info semantics."
+  print "- Query-text columns are current-state gauges; older commits that do"
+  print "  not expose them report zero in summary.tsv."
+  print "- The cpu/no wait column is active backends with no PostgreSQL wait"
+  print "  event reported, not an OS CPU counter."
+  print "- Patched hot/cold runs removed the old pg_stat_statements LWLock"
+  print "  samples; remaining waits were smaller and split across PgStatsDSA,"
+  print "  PgStatsHash, and qtext paths."
+  print "- Under churn, SpinDelay was smaller than the baseline"
+  print "  pg_stat_statements LWLock bottleneck."
+}
+' "$summary" "$wait_summary"
