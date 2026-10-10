@@ -1,12 +1,13 @@
 # pg_stat_statements benchmark suite
 
 This benchmark compares pg_stat_statements behavior across two PostgreSQL
-commits under statement churn and a cache-resident pgbench workload.
+commits under statement churn and a cache-resident pgbench workload.  It is
+intended to measure both throughput and retention: popular statements should
+remain visible while unpopular statements churn, and entry/query-text counts
+should stay bounded.
 
-The default comparison is:
-
-- patched: `fbef23389f1`
-- baseline: `3051c223a60`
+The default commit list lives in `run_pgss_benchmark_suite.sh` and can be
+overridden with `COMMITS`.
 
 The runner rebuilds each commit, creates a fresh local cluster, enables
 `pg_stat_statements`, and runs the same client-count ladder for each workload.
@@ -55,11 +56,17 @@ For each timed run the script records:
 
 - pgbench output
 - `pg_stat_activity` wait events once per second
-- a monitoring-like `pg_stat_statements` scan once every 10 seconds
+- a monitoring-like `pg_stat_statements` retention scan once every 5 seconds
 - `vmstat`, if available
 - `pidstat`, if available
 - `iostat`, if available
 - final `benchmark_analyze.sql` output
+
+The 5-second retention scan groups statements into `pop`, `unpop`,
+`select_only`, `other`, and `null_query` buckets.  It also records
+`pg_stat_statements_info` counters when the tested commit exposes them.  This
+keeps the run honest about whether the cache is preserving the useful
+statements, not just producing good TPS.
 
 The runner also appends one row per run to `summary.tsv`.
 
@@ -83,8 +90,9 @@ tmux session by default.
 Useful overrides:
 
 ```sh
-COMMITS="fbef23389f1 3051c223a60" ./run_pgss_benchmark_suite.sh
+COMMITS="patched_commit baseline_commit" ./run_pgss_benchmark_suite.sh
 CLIENTS="32 64 128 256" ./run_pgss_benchmark_suite.sh
+PGSS_SAMPLE_SECONDS=5 ./run_pgss_benchmark_suite.sh
 RESULT_ROOT=/tmp/pgss_results ./run_pgss_benchmark_suite.sh
 ```
 
@@ -134,17 +142,29 @@ summary.tsv
   meta.txt
   pgbench.log
   waits.tsv
+  waits.err
   monitor_pgss.tsv
+  monitor_pgss.err
   vmstat.log
   pidstat.log
   iostat.log
   analyze.out
+  analyze.err
+  server_log_tail.log
 ```
 
-`summary.tsv` contains the quick comparison columns:
+`summary.tsv` starts with the throughput columns:
 
 ```text
-commit  workload  clients  threads  duration_s  status  tps  latency_avg_ms  failed  outdir
+commit  workload  clients  threads  duration_s  status  tps  latency_avg_ms  failed
+```
+
+It also includes high-water retention columns:
+
+```text
+max_entries  max_pop_entries  max_unpop_entries  max_select_entries
+max_other_entries  max_entry_dealloc  max_entry_dsa_size
+max_qtext_dsa_size  max_qtext_count  max_qtext_total_len  outdir
 ```
 
 The raw logs are kept so the run can be inspected later without rerunning the

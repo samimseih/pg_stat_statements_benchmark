@@ -17,6 +17,7 @@ COMMITS=(${COMMITS:-fbef23389f1 3051c223a60})
 CLIENTS=(${CLIENTS:-1 2 4 8 16 32 64 128 256})
 MAX_THREADS="${MAX_THREADS:-32}"
 PROGRESS_SECONDS="${PROGRESS_SECONDS:-10}"
+PGSS_SAMPLE_SECONDS="${PGSS_SAMPLE_SECONDS:-5}"
 
 HOTCOLD_SECONDS="${HOTCOLD_SECONDS:-60}"
 SELECT_SECONDS="${SELECT_SECONDS:-120}"
@@ -138,15 +139,46 @@ start_samplers() {
   sampler_pids+=("$!")
 
   (
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      sample_epoch bucket entries calls min_calls max_calls avg_calls \
+      entry_dealloc entry_dsa_size qtext_dsa_size qtext_count \
+      qtext_total_len
     while true; do
       sql_at -c "
+        with info as (
+          select to_jsonb(i) as j
+          from pg_stat_statements_info as i
+        ),
+        statements as (
+          select case
+                   when query is null then 'null_query'
+                   when query like 'WITH CTEPOP_%' then 'pop'
+                   when query like 'WITH CTEUNPOP_%' then 'unpop'
+                   when lower(query) like 'select abalance from pgbench_accounts%' then 'select_only'
+                   else 'other'
+                 end as bucket,
+                 calls
+          from pg_stat_statements(true)
+        )
         select extract(epoch from clock_timestamp())::numeric(20,3),
+               statements.bucket,
                count(*),
-               coalesce(sum(calls), 0),
-               count(*) filter (where query is null),
-               coalesce(max(calls), 0)
-        from pg_stat_statements;"
-      sleep 10
+               coalesce(sum(statements.calls), 0),
+               coalesce(min(statements.calls), 0),
+               coalesce(max(statements.calls), 0),
+               coalesce(avg(statements.calls), 0)::numeric(20,2),
+               coalesce((info.j->>'entry_dealloc')::bigint,
+                        (info.j->>'dealloc')::bigint,
+                        0),
+               coalesce((info.j->>'entry_dsa_size')::bigint, 0),
+               coalesce((info.j->>'qtext_dsa_size')::bigint, 0),
+               coalesce((info.j->>'qtext_count')::bigint, 0),
+               coalesce((info.j->>'qtext_total_len')::bigint, 0)
+        from statements
+        cross join info
+        group by statements.bucket, info.j
+        order by statements.bucket;"
+      sleep "$PGSS_SAMPLE_SECONDS"
     done
   ) >"$outdir/monitor_pgss.tsv" 2>"$outdir/monitor_pgss.err" &
   sampler_pids+=("$!")
@@ -180,17 +212,75 @@ extract_pgbench_field() {
   esac
 }
 
+extract_monitor_highwaters() {
+  local file="$1"
+
+  if [[ ! -s "$file" ]]; then
+    printf "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n"
+    return
+  fi
+
+  awk -F $'\t' '
+    NR == 1 { next }
+    NF < 12 { next }
+    {
+      sample = $1
+      bucket = $2
+      entries = $3 + 0
+      totals[sample] += entries
+
+      if (totals[sample] > max_entries)
+        max_entries = totals[sample]
+      if (bucket == "pop" && entries > max_pop)
+        max_pop = entries
+      if (bucket == "unpop" && entries > max_unpop)
+        max_unpop = entries
+      if (bucket == "select_only" && entries > max_select)
+        max_select = entries
+      if (bucket == "other" && entries > max_other)
+        max_other = entries
+      if (($8 + 0) > max_entry_dealloc)
+        max_entry_dealloc = $8 + 0
+      if (($9 + 0) > max_entry_dsa_size)
+        max_entry_dsa_size = $9 + 0
+      if (($10 + 0) > max_qtext_dsa_size)
+        max_qtext_dsa_size = $10 + 0
+      if (($11 + 0) > max_qtext_count)
+        max_qtext_count = $11 + 0
+      if (($12 + 0) > max_qtext_total_len)
+        max_qtext_total_len = $12 + 0
+    }
+    END {
+      printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+             max_entries, max_pop, max_unpop, max_select, max_other,
+             max_entry_dealloc, max_entry_dsa_size, max_qtext_dsa_size,
+             max_qtext_count
+      printf "\t%d\n", max_qtext_total_len
+    }' "$file"
+}
+
 append_summary() {
   local commit="$1" workload="$2" clients="$3" threads="$4" duration="$5" status="$6" outdir="$7"
   local tps latency failed
+  local max_entries max_pop max_unpop max_select max_other
+  local max_entry_dealloc max_entry_dsa_size max_qtext_dsa_size
+  local max_qtext_count max_qtext_total_len
 
   tps="$(extract_pgbench_field "$outdir/pgbench.log" tps)"
   latency="$(extract_pgbench_field "$outdir/pgbench.log" latency)"
   failed="$(extract_pgbench_field "$outdir/pgbench.log" failed)"
 
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+  IFS=$'\t' read -r max_entries max_pop max_unpop max_select max_other \
+    max_entry_dealloc max_entry_dsa_size max_qtext_dsa_size \
+    max_qtext_count max_qtext_total_len \
+    < <(extract_monitor_highwaters "$outdir/monitor_pgss.tsv")
+
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "$commit" "$workload" "$clients" "$threads" "$duration" "$status" \
-    "${tps:-}" "${latency:-}" "${failed:-}" "$outdir" >>"$summary"
+    "${tps:-}" "${latency:-}" "${failed:-}" \
+    "$max_entries" "$max_pop" "$max_unpop" "$max_select" "$max_other" \
+    "$max_entry_dealloc" "$max_entry_dsa_size" "$max_qtext_dsa_size" \
+    "$max_qtext_count" "$max_qtext_total_len" "$outdir" >>"$summary"
 }
 
 run_pgbench_capture() {
@@ -267,7 +357,12 @@ main() {
   trap checkout_original_on_exit EXIT
 
   mkdir -p "$RESULT_ROOT"
-  printf "commit\tworkload\tclients\tthreads\tduration_s\tstatus\ttps\tlatency_avg_ms\tfailed\toutdir\n" >"$summary"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    commit workload clients threads duration_s status tps latency_avg_ms \
+    failed max_entries max_pop_entries max_unpop_entries max_select_entries \
+    max_other_entries max_entry_dealloc max_entry_dsa_size \
+    max_qtext_dsa_size max_qtext_count max_qtext_total_len outdir \
+    >"$summary"
 
   for commit in "${COMMITS[@]}"; do
     build_and_start_commit "$commit"

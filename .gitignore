@@ -3,3 +3,4 @@ results/
 *.out
 *.err
 *.tsv
+tags

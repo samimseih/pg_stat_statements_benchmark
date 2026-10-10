@@ -23,6 +23,27 @@ select count(*) as entries,
        count(*) filter (where query is null) as null_query_entries
 from pg_stat_statements;
 
+\echo pg_stat_statements retention buckets
+select bucket,
+       count(*) as entries,
+       coalesce(sum(calls), 0) as calls,
+       min(calls) as min_calls,
+       max(calls) as max_calls,
+       avg(calls)::numeric(20,2) as avg_calls
+from (
+    select case
+             when query is null then 'null_query'
+             when query like 'WITH CTEPOP_%' then 'pop'
+             when query like 'WITH CTEUNPOP_%' then 'unpop'
+             when lower(query) like 'select abalance from pgbench_accounts%' then 'select_only'
+             else 'other'
+           end as bucket,
+           calls
+    from pg_stat_statements(true)
+) s
+group by bucket
+order by bucket;
+
 \echo hot/cold retention
 select
     case
