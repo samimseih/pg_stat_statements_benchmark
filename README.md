@@ -64,8 +64,9 @@ For each timed run the script records:
 
 The 5-second retention scan groups statements into `pop`, `unpop`,
 `select_only`, `other`, and `null_query` buckets.  It also records
-`pg_stat_statements_info` counters when the tested commit exposes them.  This
-keeps the run honest about whether the cache is preserving the useful
+`pg_stat_statements_info` counters when the tested commit exposes them, and the
+summary reports sampled min/max values for entry DSA and query-text storage.
+This keeps the run honest about whether the cache is preserving the useful
 statements, not just producing good TPS.
 
 The runner also appends one row per run to `summary.tsv`.
@@ -159,12 +160,16 @@ summary.tsv
 commit  workload  clients  threads  duration_s  status  tps  latency_avg_ms  failed
 ```
 
-It also includes high-water retention columns:
+It also includes high-water retention columns and sampled min/max storage
+columns:
 
 ```text
 max_entries  max_pop_entries  max_unpop_entries  max_select_entries
-max_other_entries  max_entry_dealloc  max_entry_dsa_size
-max_qtext_dsa_size  max_qtext_count  max_qtext_total_len  outdir
+max_other_entries  max_entry_dealloc
+min_entry_dsa_size  max_entry_dsa_size
+min_qtext_dsa_size  max_qtext_dsa_size
+min_qtext_count  max_qtext_count
+min_qtext_total_len  max_qtext_total_len  outdir
 ```
 
 The raw logs are kept so the run can be inspected later without rerunning the

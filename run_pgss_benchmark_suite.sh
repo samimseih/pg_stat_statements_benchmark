@@ -212,11 +212,11 @@ extract_pgbench_field() {
   esac
 }
 
-extract_monitor_highwaters() {
+extract_monitor_summary() {
   local file="$1"
 
   if [[ ! -s "$file" ]]; then
-    printf "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n"
+    printf "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n"
     return
   fi
 
@@ -241,20 +241,38 @@ extract_monitor_highwaters() {
         max_other = entries
       if (($8 + 0) > max_entry_dealloc)
         max_entry_dealloc = $8 + 0
-      if (($9 + 0) > max_entry_dsa_size)
-        max_entry_dsa_size = $9 + 0
-      if (($10 + 0) > max_qtext_dsa_size)
-        max_qtext_dsa_size = $10 + 0
-      if (($11 + 0) > max_qtext_count)
-        max_qtext_count = $11 + 0
-      if (($12 + 0) > max_qtext_total_len)
-        max_qtext_total_len = $12 + 0
+
+      entry_dsa_size = $9 + 0
+      qtext_dsa_size = $10 + 0
+      qtext_count = $11 + 0
+      qtext_total_len = $12 + 0
+
+      if (!seen_memory || entry_dsa_size < min_entry_dsa_size)
+        min_entry_dsa_size = entry_dsa_size
+      if (!seen_memory || qtext_dsa_size < min_qtext_dsa_size)
+        min_qtext_dsa_size = qtext_dsa_size
+      if (!seen_memory || qtext_count < min_qtext_count)
+        min_qtext_count = qtext_count
+      if (!seen_memory || qtext_total_len < min_qtext_total_len)
+        min_qtext_total_len = qtext_total_len
+
+      if (entry_dsa_size > max_entry_dsa_size)
+        max_entry_dsa_size = entry_dsa_size
+      if (qtext_dsa_size > max_qtext_dsa_size)
+        max_qtext_dsa_size = qtext_dsa_size
+      if (qtext_count > max_qtext_count)
+        max_qtext_count = qtext_count
+      if (qtext_total_len > max_qtext_total_len)
+        max_qtext_total_len = qtext_total_len
+
+      seen_memory = 1
     }
     END {
-      printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+      printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
              max_entries, max_pop, max_unpop, max_select, max_other,
-             max_entry_dealloc, max_entry_dsa_size, max_qtext_dsa_size,
-             max_qtext_count
+             max_entry_dealloc, min_entry_dsa_size, max_entry_dsa_size,
+             min_qtext_dsa_size, max_qtext_dsa_size, min_qtext_count,
+             max_qtext_count, min_qtext_total_len
       printf "\t%d\n", max_qtext_total_len
     }' "$file"
 }
@@ -263,24 +281,29 @@ append_summary() {
   local commit="$1" workload="$2" clients="$3" threads="$4" duration="$5" status="$6" outdir="$7"
   local tps latency failed
   local max_entries max_pop max_unpop max_select max_other
-  local max_entry_dealloc max_entry_dsa_size max_qtext_dsa_size
-  local max_qtext_count max_qtext_total_len
+  local max_entry_dealloc min_entry_dsa_size max_entry_dsa_size
+  local min_qtext_dsa_size max_qtext_dsa_size min_qtext_count
+  local max_qtext_count min_qtext_total_len max_qtext_total_len
 
   tps="$(extract_pgbench_field "$outdir/pgbench.log" tps)"
   latency="$(extract_pgbench_field "$outdir/pgbench.log" latency)"
   failed="$(extract_pgbench_field "$outdir/pgbench.log" failed)"
 
   IFS=$'\t' read -r max_entries max_pop max_unpop max_select max_other \
-    max_entry_dealloc max_entry_dsa_size max_qtext_dsa_size \
-    max_qtext_count max_qtext_total_len \
-    < <(extract_monitor_highwaters "$outdir/monitor_pgss.tsv")
+    max_entry_dealloc min_entry_dsa_size max_entry_dsa_size \
+    min_qtext_dsa_size max_qtext_dsa_size min_qtext_count \
+    max_qtext_count min_qtext_total_len max_qtext_total_len \
+    < <(extract_monitor_summary "$outdir/monitor_pgss.tsv")
 
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "$commit" "$workload" "$clients" "$threads" "$duration" "$status" \
     "${tps:-}" "${latency:-}" "${failed:-}" \
     "$max_entries" "$max_pop" "$max_unpop" "$max_select" "$max_other" \
-    "$max_entry_dealloc" "$max_entry_dsa_size" "$max_qtext_dsa_size" \
-    "$max_qtext_count" "$max_qtext_total_len" "$outdir" >>"$summary"
+    "$max_entry_dealloc" "$min_entry_dsa_size" "$max_entry_dsa_size" \
+    "$min_qtext_dsa_size" "$max_qtext_dsa_size" \
+    "$min_qtext_count" "$max_qtext_count" \
+    "$min_qtext_total_len" "$max_qtext_total_len" \
+    "$outdir" >>"$summary"
 }
 
 run_pgbench_capture() {
@@ -357,11 +380,13 @@ main() {
   trap checkout_original_on_exit EXIT
 
   mkdir -p "$RESULT_ROOT"
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     commit workload clients threads duration_s status tps latency_avg_ms \
     failed max_entries max_pop_entries max_unpop_entries max_select_entries \
-    max_other_entries max_entry_dealloc max_entry_dsa_size \
-    max_qtext_dsa_size max_qtext_count max_qtext_total_len outdir \
+    max_other_entries max_entry_dealloc min_entry_dsa_size \
+    max_entry_dsa_size min_qtext_dsa_size max_qtext_dsa_size \
+    min_qtext_count max_qtext_count min_qtext_total_len \
+    max_qtext_total_len outdir \
     >"$summary"
 
   for commit in "${COMMITS[@]}"; do

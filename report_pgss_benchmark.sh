@@ -120,12 +120,22 @@ function nfmt(n, s, out) {
   return s out
 }
 
+function rangefmt(min, max) {
+  if (sprintf("%.0f", min) == sprintf("%.0f", max))
+    return nfmt(max)
+  return nfmt(min) "-" nfmt(max)
+}
+
 function label(commit) {
   return commit == patched ? "patched" : "baseline"
 }
 
 function cell(commit, workload, clients, field) {
   return data[commit SUBSEP workload SUBSEP clients SUBSEP field]
+}
+
+function fieldnum(field) {
+  return (field in col) ? $(col[field]) + 0 : 0
 }
 
 function have_pair(workload, clients) {
@@ -198,6 +208,17 @@ FNR == NR {
   data[key SUBSEP "other"] = $col["max_other_entries"] + 0
   data[key SUBSEP "dealloc"] = $col["max_entry_dealloc"] + 0
   data[key SUBSEP "qtext"] = $col["max_qtext_count"] + 0
+  data[key SUBSEP "qtext_min"] = \
+    ("min_qtext_count" in col) ? fieldnum("min_qtext_count") : data[key SUBSEP "qtext"]
+  data[key SUBSEP "qtext_len_min"] = \
+    ("min_qtext_total_len" in col) ? fieldnum("min_qtext_total_len") : fieldnum("max_qtext_total_len")
+  data[key SUBSEP "qtext_len_max"] = fieldnum("max_qtext_total_len")
+  data[key SUBSEP "qtext_dsa_min"] = \
+    ("min_qtext_dsa_size" in col) ? fieldnum("min_qtext_dsa_size") : fieldnum("max_qtext_dsa_size")
+  data[key SUBSEP "qtext_dsa_max"] = fieldnum("max_qtext_dsa_size")
+  data[key SUBSEP "entry_dsa_min"] = \
+    ("min_entry_dsa_size" in col) ? fieldnum("min_entry_dsa_size") : fieldnum("max_entry_dsa_size")
+  data[key SUBSEP "entry_dsa_max"] = fieldnum("max_entry_dsa_size")
 
   duration[workload] = $col["duration_s"] + 0
   clients_seen[clients] = 1
@@ -332,9 +353,10 @@ END {
 
   print "## Query Text And Churn"
   print ""
-  print "| workload | clients | patched qtext | patched dealloc |" \
+  print "| workload | clients | patched qtext count | patched qtext bytes |" \
+        " patched qtext DSA | patched entry DSA | patched dealloc |" \
         " baseline dealloc |"
-  print "| --- | ---: | ---: | ---: | ---: |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 2; w++) {
     workload = workload_order[w]
     for (i = 1; i <= nwanted; i++) {
@@ -342,7 +364,14 @@ END {
       if (!have_pair(workload, clients))
         continue
       print "| " workload " | " clients " | " \
-            nfmt(cell(patched, workload, clients, "qtext")) " | " \
+            rangefmt(cell(patched, workload, clients, "qtext_min"),
+                     cell(patched, workload, clients, "qtext")) " | " \
+            rangefmt(cell(patched, workload, clients, "qtext_len_min"),
+                     cell(patched, workload, clients, "qtext_len_max")) " | " \
+            rangefmt(cell(patched, workload, clients, "qtext_dsa_min"),
+                     cell(patched, workload, clients, "qtext_dsa_max")) " | " \
+            rangefmt(cell(patched, workload, clients, "entry_dsa_min"),
+                     cell(patched, workload, clients, "entry_dsa_max")) " | " \
             nfmt(cell(patched, workload, clients, "dealloc")) " | " \
             nfmt(cell(baseline, workload, clients, "dealloc")) " |"
     }
@@ -365,7 +394,8 @@ END {
   print ""
   print "- Deallocation counters are eviction-pass counters, matching upstream"
   print "  pg_stat_statements_info semantics."
-  print "- Query-text columns are current-state gauges; older commits that do"
+  print "- Query-text and entry DSA columns are sampled current-state gauges;"
+  print "  summary.tsv reports their sampled min/max. Older commits that do"
   print "  not expose them report zero in summary.tsv."
   print "- The cpu/no wait column is active backends with no PostgreSQL wait"
   print "  event reported, not an OS CPU counter."
