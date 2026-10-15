@@ -19,7 +19,7 @@ configured client-count ladder for each workload.
   `pg_stat_statements_v14` versus PostgreSQL master, 500 seconds per point,
   with churn throughput up by as much as 87.3% and `select_only` essentially
   unchanged.  Retention and memory triples in the report are sampled
-  `min/avg/max` values.
+  `min/avg/max` values; memory values are shown in human-readable units.
 
 ## Requirements
 
@@ -229,8 +229,10 @@ If no result directory is passed, the newest `results/<timestamp>` directory is
 used.  The report starts with a short summary, then prints run metadata,
 per-workload throughput tables, retention tables, query-text/churn counters,
 memory gauges, and wait-event summaries.  Retention and memory columns that
-show three values use `min/avg/max` from the periodic samples.  The report
-labels the first commit in `summary.tsv` as `patched` and the second as
-`baseline`, and does not look up or print commit subjects.  The wait-event
-`cpu/no wait` column is active backends with no PostgreSQL wait event
-reported; it is not sampled from OS CPU counters.
+show three values use `min/avg/max` from the periodic samples.  The Markdown
+report prints memory in human-readable units; `summary.tsv` keeps raw byte
+counts for scripts.  The report labels the first commit in `summary.tsv` as
+`patched` and the second as `baseline`.  `PATCHED_LABEL`, `BASELINE_LABEL`,
+`PATCHED_URL`, and `BASELINE_URL` can be set when generating a published
+report.  The wait-event `cpu/no wait` column is active backends with no
+PostgreSQL wait event reported; it is not sampled from OS CPU counters.

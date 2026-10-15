@@ -79,7 +79,9 @@ awk -F $'\t' \
   -v patched_hint="$patched_commit" \
   -v baseline_hint="$baseline_commit" \
   -v patched_label_hint="${PATCHED_LABEL:-}" \
-  -v baseline_label_hint="${BASELINE_LABEL:-}" '
+  -v baseline_label_hint="${BASELINE_LABEL:-}" \
+  -v patched_url_hint="${PATCHED_URL:-}" \
+  -v baseline_url_hint="${BASELINE_URL:-}" '
 function pct(patched, baseline) {
   if (baseline == 0)
     return "n/a"
@@ -136,6 +138,32 @@ function triplefmt(min, avg, max) {
   return nfmt(min) "/" nfmt(avg) "/" nfmt(max)
 }
 
+function bytefmt(n, v, idx, unit) {
+  split("B KiB MiB GiB TiB", unit, " ")
+
+  v = n + 0
+  idx = 1
+  while (v >= 1024 && idx < 5) {
+    v /= 1024
+    idx++
+  }
+
+  if (idx == 1)
+    return nfmt(v) " " unit[idx]
+  if (v >= 100)
+    return sprintf("%.0f %s", v, unit[idx])
+  if (v >= 10)
+    return sprintf("%.1f %s", v, unit[idx])
+  return sprintf("%.2f %s", v, unit[idx])
+}
+
+function triplebytefmt(min, avg, max) {
+  if (sprintf("%.0f", min) == sprintf("%.0f", avg) &&
+      sprintf("%.0f", avg) == sprintf("%.0f", max))
+    return bytefmt(avg)
+  return bytefmt(min) "/" bytefmt(avg) "/" bytefmt(max)
+}
+
 function label(commit) {
   return commit == patched ? "patched" : "baseline"
 }
@@ -184,10 +212,13 @@ function print_throughput(workload, i, clients, p, b) {
   print ""
 }
 
-function commitfmt(commit, hint) {
+function commitfmt(commit, hint, url, text) {
+  text = "`" commit "`"
+  if (url != "")
+    text = "[" text "](" url ")"
   if (hint != "")
-    return "`" commit "` - " hint
-  return "`" commit "`"
+    return text " - " hint
+  return text
 }
 
 function print_wait_row(workload, commit) {
@@ -373,8 +404,10 @@ END {
   print "| item | value |"
   print "| --- | --- |"
   print "| result directory | `" result_label "` |"
-  print "| patched | " commitfmt(patched, patched_label_hint) " |"
-  print "| baseline | " commitfmt(baseline, baseline_label_hint) " |"
+  print "| patched | " \
+        commitfmt(patched, patched_label_hint, patched_url_hint) " |"
+  print "| baseline | " \
+        commitfmt(baseline, baseline_label_hint, baseline_url_hint) " |"
   print "| hot/cold duration | " duration["hotcold_100m"] \
         " seconds per point |"
   print "| select-only duration | " duration["select_only"] \
@@ -430,9 +463,9 @@ END {
   print "## Query Text And Churn"
   print ""
   print "Query-text and memory values are sampled min/avg/max."
-  print "Memory values are raw bytes."
+  print "Memory values use human-readable IEC units."
   print ""
-  print "| workload | clients | patched qtext count | patched qtext bytes |" \
+  print "| workload | clients | patched qtext count | patched qtext payload min/avg/max |" \
         " patched qtext DSA min/avg/max | patched entry DSA min/avg/max | patched dealloc |" \
         " baseline dealloc |"
   print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
@@ -446,15 +479,15 @@ END {
             triplefmt(cell(patched, workload, clients, "qtext_min"),
                       cell(patched, workload, clients, "qtext_avg"),
                       cell(patched, workload, clients, "qtext")) " | " \
-            triplefmt(cell(patched, workload, clients, "qtext_len_min"),
-                      cell(patched, workload, clients, "qtext_len_avg"),
-                      cell(patched, workload, clients, "qtext_len_max")) " | " \
-            triplefmt(cell(patched, workload, clients, "qtext_dsa_min"),
-                      cell(patched, workload, clients, "qtext_dsa_avg"),
-                      cell(patched, workload, clients, "qtext_dsa_max")) " | " \
-            triplefmt(cell(patched, workload, clients, "entry_dsa_min"),
-                      cell(patched, workload, clients, "entry_dsa_avg"),
-                      cell(patched, workload, clients, "entry_dsa_max")) " | " \
+            triplebytefmt(cell(patched, workload, clients, "qtext_len_min"),
+                          cell(patched, workload, clients, "qtext_len_avg"),
+                          cell(patched, workload, clients, "qtext_len_max")) " | " \
+            triplebytefmt(cell(patched, workload, clients, "qtext_dsa_min"),
+                          cell(patched, workload, clients, "qtext_dsa_avg"),
+                          cell(patched, workload, clients, "qtext_dsa_max")) " | " \
+            triplebytefmt(cell(patched, workload, clients, "entry_dsa_min"),
+                          cell(patched, workload, clients, "entry_dsa_avg"),
+                          cell(patched, workload, clients, "entry_dsa_max")) " | " \
             nfmt(cell(patched, workload, clients, "dealloc")) " | " \
             nfmt(cell(baseline, workload, clients, "dealloc")) " |"
     }
@@ -463,9 +496,9 @@ END {
 
   print "## Memory Gauge Averages"
   print ""
-  print "Average values from the periodic samples. Memory values are raw bytes."
+  print "Average values from the periodic samples. Memory values use human-readable IEC units."
   print ""
-  print "| workload | clients | avg entries | avg qtext count | avg qtext bytes |" \
+  print "| workload | clients | avg entries | avg qtext count | avg qtext payload |" \
         " avg qtext DSA | avg entry DSA |"
   print "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 3; w++) {
@@ -477,9 +510,9 @@ END {
       print "| " workload " | " clients " | " \
             nfmt(cell(patched, workload, clients, "entries_avg")) " | " \
             nfmt(cell(patched, workload, clients, "qtext_avg")) " | " \
-            nfmt(cell(patched, workload, clients, "qtext_len_avg")) " | " \
-            nfmt(cell(patched, workload, clients, "qtext_dsa_avg")) " | " \
-            nfmt(cell(patched, workload, clients, "entry_dsa_avg")) " |"
+            bytefmt(cell(patched, workload, clients, "qtext_len_avg")) " | " \
+            bytefmt(cell(patched, workload, clients, "qtext_dsa_avg")) " | " \
+            bytefmt(cell(patched, workload, clients, "entry_dsa_avg")) " |"
     }
   }
   print ""
@@ -505,6 +538,8 @@ END {
   print "- Query-text and entry DSA columns are sampled current-state gauges;"
   print "  summary.tsv reports their sampled min/avg/max. Older commits that do"
   print "  not expose them report zero in summary.tsv."
+  print "- The Markdown report prints memory with IEC units; summary.tsv keeps"
+  print "  raw byte counts for scripts."
   print "- Each commit reuses the same PostgreSQL server across workload groups,"
   print "  so select_only storage gauges can include DSA space allocated by"
   print "  earlier churn runs."
