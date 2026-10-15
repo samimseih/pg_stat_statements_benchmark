@@ -393,8 +393,10 @@ END {
   print ""
   print "Values are sampled min/avg/max."
   print ""
-  print "| workload | clients | patched entries | baseline entries |" \
-        " patched pop | baseline pop | patched unpop | baseline unpop |"
+  print "| workload | clients | patched entries min/avg/max |" \
+        " baseline entries min/avg/max | patched pop min/avg/max |" \
+        " baseline pop min/avg/max | patched unpop min/avg/max |" \
+        " baseline unpop min/avg/max |"
   print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 2; w++) {
     workload = workload_order[w]

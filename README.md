@@ -18,7 +18,8 @@ configured client-count ladder for each workload.
 - [EC2 c7i.8xlarge run, 2026-10-15](reports/2026-10-15-ec2-c7i-8xlarge.md):
   `pg_stat_statements_v14` versus PostgreSQL master, 500 seconds per point,
   with churn throughput up by as much as 87.3% and `select_only` essentially
-  unchanged.
+  unchanged.  Retention and memory triples in the report are sampled
+  `min/avg/max` values.
 
 ## Requirements
 
@@ -227,7 +228,9 @@ Generate a Markdown report from a completed result directory:
 If no result directory is passed, the newest `results/<timestamp>` directory is
 used.  The report starts with a short summary, then prints run metadata,
 per-workload throughput tables, retention tables, query-text/churn counters,
-and wait-event summaries.  It labels the first commit in `summary.tsv` as
-`patched` and the second as `baseline`, and does not look up or print commit
-subjects.  The wait-event `cpu/no wait` column is active backends with no
-PostgreSQL wait event reported; it is not sampled from OS CPU counters.
+memory gauges, and wait-event summaries.  Retention and memory columns that
+show three values use `min/avg/max` from the periodic samples.  The report
+labels the first commit in `summary.tsv` as `patched` and the second as
+`baseline`, and does not look up or print commit subjects.  The wait-event
+`cpu/no wait` column is active backends with no PostgreSQL wait event
+reported; it is not sampled from OS CPU counters.
