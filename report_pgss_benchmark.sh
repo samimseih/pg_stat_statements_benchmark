@@ -74,9 +74,12 @@ done > "$wait_summary"
 
 awk -F $'\t' \
   -v result_dir="$RESULT_DIR" \
+  -v result_label="${REPORT_RESULT_DIR_LABEL:-}" \
   -v report_clients="$REPORT_CLIENTS" \
   -v patched_hint="$patched_commit" \
-  -v baseline_hint="$baseline_commit" '
+  -v baseline_hint="$baseline_commit" \
+  -v patched_label_hint="${PATCHED_LABEL:-}" \
+  -v baseline_label_hint="${BASELINE_LABEL:-}" '
 function pct(patched, baseline) {
   if (baseline == 0)
     return "n/a"
@@ -150,11 +153,22 @@ function have_pair(workload, clients) {
           (baseline SUBSEP workload SUBSEP clients SUBSEP "tps") in data)
 }
 
+function have_workload(workload, i) {
+  for (i = 1; i <= nwanted; i++) {
+    if (have_pair(workload, wanted_clients[i]))
+      return 1
+  }
+  return 0
+}
+
 function waitcell(commit, workload, field) {
   return waits[commit SUBSEP workload SUBSEP field] + 0
 }
 
 function print_throughput(workload, i, clients, p, b) {
+  if (!have_workload(workload))
+    return
+
   print "### " workload
   print ""
   print "| clients | patched TPS | baseline TPS | delta |"
@@ -168,6 +182,12 @@ function print_throughput(workload, i, clients, p, b) {
     print "| " clients " | " nfmt(p) " | " nfmt(b) " | " pct(p, b) " |"
   }
   print ""
+}
+
+function commitfmt(commit, hint) {
+  if (hint != "")
+    return "`" commit "` - " hint
+  return "`" commit "`"
 }
 
 function print_wait_row(workload, commit) {
@@ -269,6 +289,9 @@ FNR == NR {
 }
 
 END {
+  if (result_label == "")
+    result_label = result_dir
+
   high100 = pctrange("hotcold_100m")
   high1500 = pctrange("hotcold_1500")
   highselect = pctrange("select_only")
@@ -314,17 +337,29 @@ END {
   print ""
   print "## Summary"
   print ""
-  print "- hotcold_100m throughput improved by " high100 \
-        " at 32-256 clients."
-  print "- hotcold_1500 throughput improved by " high1500 \
-        " at 32-256 clients."
-  print "- select_only changed by " highselect \
-        " at 32-256 clients."
-  print "- Patched retained at least " nfmt(min_pop) \
-        " popular statements at every reported churn point."
-  print "- Patched qtext_count high-water was " \
-        nfmt(max_qtext["hotcold_100m"]) " for hotcold_100m and " \
-        nfmt(max_qtext["hotcold_1500"]) " for hotcold_1500."
+  if (have_workload("hotcold_100m"))
+    print "- hotcold_100m throughput improved by " high100 \
+          " across reported non-single-client points."
+  if (have_workload("hotcold_1500"))
+    print "- hotcold_1500 throughput improved by " high1500 \
+          " across reported non-single-client points."
+  if (have_workload("select_only"))
+    print "- select_only changed by " highselect \
+          " across reported non-single-client points."
+  if (min_pop)
+    print "- Patched retained at least " nfmt(min_pop) \
+          " popular statements at every reported churn point."
+  qtext_line = ""
+  for (w = 1; w <= 2; w++) {
+    workload = workload_order[w]
+    if (!have_workload(workload))
+      continue
+    if (qtext_line != "")
+      qtext_line = qtext_line " and "
+    qtext_line = qtext_line nfmt(max_qtext[workload]) " for " workload
+  }
+  if (qtext_line != "")
+    print "- Patched qtext_count high-water was " qtext_line "."
   print "- Baseline churn sampled " nfmt(baseline_churn_pgss) \
         " pg_stat_statements LWLock waits; patched sampled " \
         nfmt(patched_churn_pgss) "."
@@ -337,17 +372,15 @@ END {
   print ""
   print "| item | value |"
   print "| --- | --- |"
-  print "| result directory | `" result_dir "` |"
-  print "| patched | `" patched "` |"
-  print "| baseline | `" baseline "` |"
+  print "| result directory | `" result_label "` |"
+  print "| patched | " commitfmt(patched, patched_label_hint) " |"
+  print "| baseline | " commitfmt(baseline, baseline_label_hint) " |"
   print "| hot/cold duration | " duration["hotcold_100m"] \
         " seconds per point |"
   print "| select-only duration | " duration["select_only"] \
         " seconds per point |"
   print "| report client points | `" report_clients "` |"
   print "| failed pgbench rows | " failed + 0 " |"
-  print ""
-  print "No commit subjects are included in this report."
   print ""
 
   print "## Throughput"
@@ -394,10 +427,11 @@ END {
 
   print "## Query Text And Churn"
   print ""
-  print "Query-text values are sampled min/avg/max."
+  print "Query-text and memory values are sampled min/avg/max."
+  print "Memory values are raw bytes."
   print ""
   print "| workload | clients | patched qtext count | patched qtext bytes |" \
-        " patched qtext DSA | patched entry DSA | patched dealloc |" \
+        " patched qtext DSA min/avg/max | patched entry DSA min/avg/max | patched dealloc |" \
         " baseline dealloc |"
   print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 2; w++) {
@@ -425,6 +459,29 @@ END {
   }
   print ""
 
+  print "## Memory Gauge Averages"
+  print ""
+  print "Average values from the periodic samples. Memory values are raw bytes."
+  print ""
+  print "| workload | clients | avg entries | avg qtext count | avg qtext bytes |" \
+        " avg qtext DSA | avg entry DSA |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"
+  for (w = 1; w <= 3; w++) {
+    workload = workload_order[w]
+    for (i = 1; i <= nwanted; i++) {
+      clients = wanted_clients[i]
+      if (!have_pair(workload, clients))
+        continue
+      print "| " workload " | " clients " | " \
+            nfmt(cell(patched, workload, clients, "entries_avg")) " | " \
+            nfmt(cell(patched, workload, clients, "qtext_avg")) " | " \
+            nfmt(cell(patched, workload, clients, "qtext_len_avg")) " | " \
+            nfmt(cell(patched, workload, clients, "qtext_dsa_avg")) " | " \
+            nfmt(cell(patched, workload, clients, "entry_dsa_avg")) " |"
+    }
+  }
+  print ""
+
   print "## Wait Events"
   print ""
   print "| workload | variant | active samples | pgss LWLock | PgStatsDSA |" \
@@ -432,6 +489,8 @@ END {
   print "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 3; w++) {
     workload = workload_order[w]
+    if (!have_workload(workload))
+      continue
     print_wait_row(workload, baseline)
     print_wait_row(workload, patched)
   }
@@ -442,8 +501,11 @@ END {
   print "- Deallocation counters are eviction-pass counters, matching upstream"
   print "  pg_stat_statements_info semantics."
   print "- Query-text and entry DSA columns are sampled current-state gauges;"
-  print "  summary.tsv reports their sampled min/max. Older commits that do"
+  print "  summary.tsv reports their sampled min/avg/max. Older commits that do"
   print "  not expose them report zero in summary.tsv."
+  print "- Each commit reuses the same PostgreSQL server across workload groups,"
+  print "  so select_only storage gauges can include DSA space allocated by"
+  print "  earlier churn runs."
   print "- The cpu/no wait column is active backends with no PostgreSQL wait"
   print "  event reported, not an OS CPU counter."
   print "- Patched hot/cold runs removed the old pg_stat_statements LWLock"
