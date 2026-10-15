@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PG_WORKTREE="${PG_WORKTREE:-$HOME/pgdev/installations/worktrees/dev}"
 PREFIX="${PREFIX:-$HOME/pgdev/installations}"
 WORKTREE_NAME="${WORKTREE_NAME:-dev}"
-BUILD_WRAPPER="${BUILD_WRAPPER:-$HOME/build}"
+BUILD_DIR="${BUILD_DIR:-$PG_WORKTREE/build-release}"
 
 PGHOST="${PGHOST:-localhost}"
 PGPORT="${PGPORT:-5432}"
@@ -15,9 +15,14 @@ PGDATABASE="${PGDATABASE:-postgres}"
 
 COMMITS=(${COMMITS:-fbef23389f1 3051c223a60})
 CLIENTS=(${CLIENTS:-1 2 4 8 16 32 64 128 256})
+SELECT_CLIENTS=(${SELECT_CLIENTS:-${CLIENTS[*]}})
 MAX_THREADS="${MAX_THREADS:-32}"
 PROGRESS_SECONDS="${PROGRESS_SECONDS:-10}"
 PGSS_SAMPLE_SECONDS="${PGSS_SAMPLE_SECONDS:-5}"
+PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
+RUN_HOTCOLD_100M="${RUN_HOTCOLD_100M:-1}"
+RUN_HOTCOLD_1500="${RUN_HOTCOLD_1500:-1}"
+RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
 
 HOTCOLD_SECONDS="${HOTCOLD_SECONDS:-60}"
 SELECT_SECONDS="${SELECT_SECONDS:-120}"
@@ -89,15 +94,39 @@ SQL
   reset_pgss
 }
 
+verify_release_build() {
+  local config
+
+  config="$(meson configure "$BUILD_DIR" 2>/dev/null)"
+  echo
+  echo "=== Configured build type ($BUILD_DIR) ==="
+  echo "$config" | grep -E '^\s+(buildtype|optimization|debug|b_ndebug|cassert)\s'
+
+  echo "$config" | awk '
+    $1 == "debug" && $2 != "false" { exit 1 }
+    $1 == "optimization" && $2 == "0" { exit 1 }
+    $1 == "b_ndebug" && $2 != "true" { exit 1 }
+    $1 == "cassert" && $2 != "false" { exit 1 }
+  ' || die "$BUILD_DIR is not configured as a release/perf build"
+}
+
+recreate_cluster() {
+  "$PGHOME/bin/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+  rm -rf -- "$PGDATA"
+  "$PGHOME/bin/initdb" -D "$PGDATA" -U "$PGUSER" --data-checksums
+  "$PGHOME/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/logfile" -w start
+}
+
 build_and_start_commit() {
   local commit="$1"
 
   echo
   echo "==> Building $commit"
   git -C "$PG_WORKTREE" checkout -q "$commit"
-  ninja -C "$PG_WORKTREE/build" clean
-  ninja -C "$PG_WORKTREE/build" install
-  "$BUILD_WRAPPER" --skip-build --worktree-name "$WORKTREE_NAME" --release
+  verify_release_build
+  ninja -C "$BUILD_DIR" clean
+  ninja -C "$BUILD_DIR" install
+  recreate_cluster
   configure_cluster
 }
 
@@ -143,9 +172,13 @@ start_samplers() {
       sample_epoch bucket entries calls min_calls max_calls avg_calls \
       entry_dealloc entry_dsa_size qtext_dsa_size qtext_count \
       qtext_total_len
+    sleep "$PGSS_SAMPLE_START_DELAY_SECONDS"
     while true; do
       sql_at -c "
-        with info as (
+        with sample as (
+          select extract(epoch from clock_timestamp())::numeric(20,3) as ts
+        ),
+        info as (
           select to_jsonb(i) as j
           from pg_stat_statements_info as i
         ),
@@ -160,7 +193,7 @@ start_samplers() {
                  calls
           from pg_stat_statements(true)
         )
-        select extract(epoch from clock_timestamp())::numeric(20,3),
+        select sample.ts,
                statements.bucket,
                count(*),
                coalesce(sum(statements.calls), 0),
@@ -175,8 +208,9 @@ start_samplers() {
                coalesce((info.j->>'qtext_count')::bigint, 0),
                coalesce((info.j->>'qtext_total_len')::bigint, 0)
         from statements
+        cross join sample
         cross join info
-        group by statements.bucket, info.j
+        group by sample.ts, statements.bucket, info.j
         order by statements.bucket;"
       sleep "$PGSS_SAMPLE_SECONDS"
     done
@@ -216,7 +250,7 @@ extract_monitor_summary() {
   local file="$1"
 
   if [[ ! -s "$file" ]]; then
-    printf "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n"
+    printf "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n"
     return
   fi
 
@@ -224,10 +258,12 @@ extract_monitor_summary() {
     NR == 1 { next }
     NF < 12 { next }
     {
-      sample = $1
+      sample = int($1 + 0)
       bucket = $2
       entries = $3 + 0
+      samples[sample] = 1
       totals[sample] += entries
+      bucket_entries[sample, bucket] = entries
 
       if (totals[sample] > max_entries)
         max_entries = totals[sample]
@@ -246,6 +282,10 @@ extract_monitor_summary() {
       qtext_dsa_size = $10 + 0
       qtext_count = $11 + 0
       qtext_total_len = $12 + 0
+      sample_entry_dsa_size[sample] = entry_dsa_size
+      sample_qtext_dsa_size[sample] = qtext_dsa_size
+      sample_qtext_count[sample] = qtext_count
+      sample_qtext_total_len[sample] = qtext_total_len
 
       if (!seen_memory || entry_dsa_size < min_entry_dsa_size)
         min_entry_dsa_size = entry_dsa_size
@@ -268,12 +308,57 @@ extract_monitor_summary() {
       seen_memory = 1
     }
     END {
+      for (sample in samples) {
+        entries = totals[sample] + 0
+        pop = bucket_entries[sample, "pop"] + 0
+        unpop = bucket_entries[sample, "unpop"] + 0
+        select_only = bucket_entries[sample, "select_only"] + 0
+        other = bucket_entries[sample, "other"] + 0
+
+        nsamples++
+        sum_entries += entries
+        sum_pop += pop
+        sum_unpop += unpop
+        sum_select += select_only
+        sum_other += other
+        sum_entry_dsa_size += sample_entry_dsa_size[sample]
+        sum_qtext_dsa_size += sample_qtext_dsa_size[sample]
+        sum_qtext_count += sample_qtext_count[sample]
+        sum_qtext_total_len += sample_qtext_total_len[sample]
+
+        if (!seen_sample || entries < min_entries)
+          min_entries = entries
+        if (!seen_sample || pop < min_pop)
+          min_pop = pop
+        if (!seen_sample || unpop < min_unpop)
+          min_unpop = unpop
+        if (!seen_sample || select_only < min_select)
+          min_select = select_only
+        if (!seen_sample || other < min_other)
+          min_other = other
+
+        seen_sample = 1
+      }
+
+      if (nsamples == 0) {
+        print "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0"
+        exit
+      }
+
       printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
              max_entries, max_pop, max_unpop, max_select, max_other,
              max_entry_dealloc, min_entry_dsa_size, max_entry_dsa_size,
              min_qtext_dsa_size, max_qtext_dsa_size, min_qtext_count,
              max_qtext_count, min_qtext_total_len
-      printf "\t%d\n", max_qtext_total_len
+      printf "\t%d", max_qtext_total_len
+      printf "\t%d\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f",
+             nsamples, sum_entries / nsamples, sum_pop / nsamples,
+             sum_unpop / nsamples, sum_select / nsamples,
+             sum_other / nsamples, sum_qtext_count / nsamples,
+             sum_qtext_total_len / nsamples
+      printf "\t%d\t%d\t%d\t%d\t%d\t%.0f\t%.0f\n",
+             min_entries, min_pop, min_unpop, min_select, min_other,
+             sum_entry_dsa_size / nsamples, sum_qtext_dsa_size / nsamples
     }' "$file"
 }
 
@@ -284,6 +369,10 @@ append_summary() {
   local max_entry_dealloc min_entry_dsa_size max_entry_dsa_size
   local min_qtext_dsa_size max_qtext_dsa_size min_qtext_count
   local max_qtext_count min_qtext_total_len max_qtext_total_len
+  local sample_count avg_entries avg_pop avg_unpop avg_select avg_other
+  local avg_qtext_count avg_qtext_total_len
+  local min_entries min_pop min_unpop min_select min_other
+  local avg_entry_dsa_size avg_qtext_dsa_size
 
   tps="$(extract_pgbench_field "$outdir/pgbench.log" tps)"
   latency="$(extract_pgbench_field "$outdir/pgbench.log" latency)"
@@ -293,9 +382,13 @@ append_summary() {
     max_entry_dealloc min_entry_dsa_size max_entry_dsa_size \
     min_qtext_dsa_size max_qtext_dsa_size min_qtext_count \
     max_qtext_count min_qtext_total_len max_qtext_total_len \
+    sample_count avg_entries avg_pop avg_unpop avg_select avg_other \
+    avg_qtext_count avg_qtext_total_len \
+    min_entries min_pop min_unpop min_select min_other \
+    avg_entry_dsa_size avg_qtext_dsa_size \
     < <(extract_monitor_summary "$outdir/monitor_pgss.tsv")
 
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "$commit" "$workload" "$clients" "$threads" "$duration" "$status" \
     "${tps:-}" "${latency:-}" "${failed:-}" \
     "$max_entries" "$max_pop" "$max_unpop" "$max_select" "$max_other" \
@@ -303,6 +396,10 @@ append_summary() {
     "$min_qtext_dsa_size" "$max_qtext_dsa_size" \
     "$min_qtext_count" "$max_qtext_count" \
     "$min_qtext_total_len" "$max_qtext_total_len" \
+    "$sample_count" "$avg_entries" "$avg_pop" "$avg_unpop" \
+    "$avg_select" "$avg_other" "$avg_qtext_count" "$avg_qtext_total_len" \
+    "$min_entries" "$min_pop" "$min_unpop" "$min_select" "$min_other" \
+    "$avg_entry_dsa_size" "$avg_qtext_dsa_size" \
     "$outdir" >>"$summary"
 }
 
@@ -366,7 +463,7 @@ run_select_only_ladder() {
     -c 32 -j 32 -T "$SELECT_WARMUP_SECONDS" -S "$PGDATABASE" \
     >"$RESULT_ROOT/$commit/select_warmup.log" 2>&1
 
-  for clients in "${CLIENTS[@]}"; do
+  for clients in "${SELECT_CLIENTS[@]}"; do
     echo "==> $commit select_only clients=$clients"
     run_pgbench_capture "$commit" select_only "$clients" "$SELECT_SECONDS" \
       "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
@@ -380,13 +477,17 @@ main() {
   trap checkout_original_on_exit EXIT
 
   mkdir -p "$RESULT_ROOT"
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     commit workload clients threads duration_s status tps latency_avg_ms \
     failed max_entries max_pop_entries max_unpop_entries max_select_entries \
     max_other_entries max_entry_dealloc min_entry_dsa_size \
     max_entry_dsa_size min_qtext_dsa_size max_qtext_dsa_size \
     min_qtext_count max_qtext_count min_qtext_total_len \
-    max_qtext_total_len outdir \
+    max_qtext_total_len sample_count avg_entries avg_pop_entries \
+    avg_unpop_entries avg_select_entries avg_other_entries \
+    avg_qtext_count avg_qtext_total_len min_entries min_pop_entries \
+    min_unpop_entries min_select_entries min_other_entries \
+    avg_entry_dsa_size avg_qtext_dsa_size outdir \
     >"$summary"
 
   for commit in "${COMMITS[@]}"; do
@@ -397,9 +498,15 @@ main() {
     sql -c "select name, setting from pg_settings where name in ('shared_preload_libraries', 'pg_stat_statements.max', 'max_connections') order by 1;" \
       >"$RESULT_ROOT/$short_commit/settings.out"
 
-    run_hotcold_ladder "$short_commit" hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
-    run_hotcold_ladder "$short_commit" hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
-    run_select_only_ladder "$short_commit"
+    if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+    fi
+    if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+    fi
+    if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
+      run_select_only_ladder "$short_commit"
+    fi
   done
 
   echo

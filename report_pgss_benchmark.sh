@@ -126,6 +126,13 @@ function rangefmt(min, max) {
   return nfmt(min) "-" nfmt(max)
 }
 
+function triplefmt(min, avg, max) {
+  if (sprintf("%.0f", min) == sprintf("%.0f", avg) &&
+      sprintf("%.0f", avg) == sprintf("%.0f", max))
+    return nfmt(avg)
+  return nfmt(min) "/" nfmt(avg) "/" nfmt(max)
+}
+
 function label(commit) {
   return commit == patched ? "patched" : "baseline"
 }
@@ -202,22 +209,42 @@ FNR == NR {
   data[key SUBSEP "tps"] = $col["tps"] + 0
   data[key SUBSEP "duration"] = $col["duration_s"] + 0
   data[key SUBSEP "entries"] = $col["max_entries"] + 0
+  data[key SUBSEP "entries_min"] = \
+    ("min_entries" in col) ? fieldnum("min_entries") : data[key SUBSEP "entries"]
+  data[key SUBSEP "entries_avg"] = \
+    ("avg_entries" in col) ? fieldnum("avg_entries") : data[key SUBSEP "entries"]
   data[key SUBSEP "pop"] = $col["max_pop_entries"] + 0
+  data[key SUBSEP "pop_min"] = \
+    ("min_pop_entries" in col) ? fieldnum("min_pop_entries") : data[key SUBSEP "pop"]
+  data[key SUBSEP "pop_avg"] = \
+    ("avg_pop_entries" in col) ? fieldnum("avg_pop_entries") : data[key SUBSEP "pop"]
   data[key SUBSEP "unpop"] = $col["max_unpop_entries"] + 0
+  data[key SUBSEP "unpop_min"] = \
+    ("min_unpop_entries" in col) ? fieldnum("min_unpop_entries") : data[key SUBSEP "unpop"]
+  data[key SUBSEP "unpop_avg"] = \
+    ("avg_unpop_entries" in col) ? fieldnum("avg_unpop_entries") : data[key SUBSEP "unpop"]
   data[key SUBSEP "select"] = $col["max_select_entries"] + 0
   data[key SUBSEP "other"] = $col["max_other_entries"] + 0
   data[key SUBSEP "dealloc"] = $col["max_entry_dealloc"] + 0
   data[key SUBSEP "qtext"] = $col["max_qtext_count"] + 0
   data[key SUBSEP "qtext_min"] = \
     ("min_qtext_count" in col) ? fieldnum("min_qtext_count") : data[key SUBSEP "qtext"]
+  data[key SUBSEP "qtext_avg"] = \
+    ("avg_qtext_count" in col) ? fieldnum("avg_qtext_count") : data[key SUBSEP "qtext"]
   data[key SUBSEP "qtext_len_min"] = \
     ("min_qtext_total_len" in col) ? fieldnum("min_qtext_total_len") : fieldnum("max_qtext_total_len")
+  data[key SUBSEP "qtext_len_avg"] = \
+    ("avg_qtext_total_len" in col) ? fieldnum("avg_qtext_total_len") : fieldnum("max_qtext_total_len")
   data[key SUBSEP "qtext_len_max"] = fieldnum("max_qtext_total_len")
   data[key SUBSEP "qtext_dsa_min"] = \
     ("min_qtext_dsa_size" in col) ? fieldnum("min_qtext_dsa_size") : fieldnum("max_qtext_dsa_size")
+  data[key SUBSEP "qtext_dsa_avg"] = \
+    ("avg_qtext_dsa_size" in col) ? fieldnum("avg_qtext_dsa_size") : fieldnum("max_qtext_dsa_size")
   data[key SUBSEP "qtext_dsa_max"] = fieldnum("max_qtext_dsa_size")
   data[key SUBSEP "entry_dsa_min"] = \
     ("min_entry_dsa_size" in col) ? fieldnum("min_entry_dsa_size") : fieldnum("max_entry_dsa_size")
+  data[key SUBSEP "entry_dsa_avg"] = \
+    ("avg_entry_dsa_size" in col) ? fieldnum("avg_entry_dsa_size") : fieldnum("max_entry_dsa_size")
   data[key SUBSEP "entry_dsa_max"] = fieldnum("max_entry_dsa_size")
 
   duration[workload] = $col["duration_s"] + 0
@@ -331,6 +358,8 @@ END {
 
   print "## Retention"
   print ""
+  print "Values are sampled min/avg/max."
+  print ""
   print "| workload | clients | patched entries | baseline entries |" \
         " patched pop | baseline pop | patched unpop | baseline unpop |"
   print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
@@ -341,17 +370,31 @@ END {
       if (!have_pair(workload, clients))
         continue
       print "| " workload " | " clients " | " \
-            nfmt(cell(patched, workload, clients, "entries")) " | " \
-            nfmt(cell(baseline, workload, clients, "entries")) " | " \
-            nfmt(cell(patched, workload, clients, "pop")) " | " \
-            nfmt(cell(baseline, workload, clients, "pop")) " | " \
-            nfmt(cell(patched, workload, clients, "unpop")) " | " \
-            nfmt(cell(baseline, workload, clients, "unpop")) " |"
+            triplefmt(cell(patched, workload, clients, "entries_min"),
+                      cell(patched, workload, clients, "entries_avg"),
+                      cell(patched, workload, clients, "entries")) " | " \
+            triplefmt(cell(baseline, workload, clients, "entries_min"),
+                      cell(baseline, workload, clients, "entries_avg"),
+                      cell(baseline, workload, clients, "entries")) " | " \
+            triplefmt(cell(patched, workload, clients, "pop_min"),
+                      cell(patched, workload, clients, "pop_avg"),
+                      cell(patched, workload, clients, "pop")) " | " \
+            triplefmt(cell(baseline, workload, clients, "pop_min"),
+                      cell(baseline, workload, clients, "pop_avg"),
+                      cell(baseline, workload, clients, "pop")) " | " \
+            triplefmt(cell(patched, workload, clients, "unpop_min"),
+                      cell(patched, workload, clients, "unpop_avg"),
+                      cell(patched, workload, clients, "unpop")) " | " \
+            triplefmt(cell(baseline, workload, clients, "unpop_min"),
+                      cell(baseline, workload, clients, "unpop_avg"),
+                      cell(baseline, workload, clients, "unpop")) " |"
     }
   }
   print ""
 
   print "## Query Text And Churn"
+  print ""
+  print "Query-text values are sampled min/avg/max."
   print ""
   print "| workload | clients | patched qtext count | patched qtext bytes |" \
         " patched qtext DSA | patched entry DSA | patched dealloc |" \
@@ -364,14 +407,18 @@ END {
       if (!have_pair(workload, clients))
         continue
       print "| " workload " | " clients " | " \
-            rangefmt(cell(patched, workload, clients, "qtext_min"),
-                     cell(patched, workload, clients, "qtext")) " | " \
-            rangefmt(cell(patched, workload, clients, "qtext_len_min"),
-                     cell(patched, workload, clients, "qtext_len_max")) " | " \
-            rangefmt(cell(patched, workload, clients, "qtext_dsa_min"),
-                     cell(patched, workload, clients, "qtext_dsa_max")) " | " \
-            rangefmt(cell(patched, workload, clients, "entry_dsa_min"),
-                     cell(patched, workload, clients, "entry_dsa_max")) " | " \
+            triplefmt(cell(patched, workload, clients, "qtext_min"),
+                      cell(patched, workload, clients, "qtext_avg"),
+                      cell(patched, workload, clients, "qtext")) " | " \
+            triplefmt(cell(patched, workload, clients, "qtext_len_min"),
+                      cell(patched, workload, clients, "qtext_len_avg"),
+                      cell(patched, workload, clients, "qtext_len_max")) " | " \
+            triplefmt(cell(patched, workload, clients, "qtext_dsa_min"),
+                      cell(patched, workload, clients, "qtext_dsa_avg"),
+                      cell(patched, workload, clients, "qtext_dsa_max")) " | " \
+            triplefmt(cell(patched, workload, clients, "entry_dsa_min"),
+                      cell(patched, workload, clients, "entry_dsa_avg"),
+                      cell(patched, workload, clients, "entry_dsa_max")) " | " \
             nfmt(cell(patched, workload, clients, "dealloc")) " | " \
             nfmt(cell(baseline, workload, clients, "dealloc")) " |"
     }
