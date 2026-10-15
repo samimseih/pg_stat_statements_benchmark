@@ -9,28 +9,43 @@ should stay bounded.
 The default commit list lives in `run_pgss_benchmark_suite.sh` and can be
 overridden with `COMMITS`.
 
-The runner rebuilds each commit, creates a fresh local cluster, enables
-`pg_stat_statements`, and runs the same client-count ladder for each workload.
+The runner checks out each commit, installs from a release/perf Meson build,
+creates a fresh local cluster, enables `pg_stat_statements`, and runs the
+configured client-count ladder for each workload.
 
 ## Requirements
 
-The runner uses PostgreSQL's Meson/Ninja build and the `~/build` helper from
-the public `pg-build` repository:
+The runner uses PostgreSQL's Meson/Ninja build.  By default it expects the
+worktree to have a release build directory at:
 
-```text
-https://github.com/samimseih/pg-build
+```sh
+$PG_WORKTREE/build-release
 ```
 
-`~/build` is used to recreate and start a fresh local cluster after each
-commit is installed.  The path can be changed with `BUILD_WRAPPER`.
+The build directory can be changed with `BUILD_DIR`.  Before each commit is
+installed, the runner checks the Meson configuration and refuses to continue if
+the build is not suitable for perf testing:
+
+```text
+debug=false
+optimization != 0
+b_ndebug=true
+cassert=false
+```
+
+The runner recreates the local data directory itself after each install.  It
+does not use the `~/build` helper.
 
 ## Workloads
 
-Client counts:
+Default client counts:
 
 ```sh
 1 2 4 8 16 32 64 128 256
 ```
+
+`CLIENTS` controls the hot/cold workloads.  `SELECT_CLIENTS` controls
+`select_only` and defaults to the same list.
 
 Protocol:
 
@@ -50,6 +65,10 @@ Workloads:
 The hot/cold workloads use query names like `CTEPOP_123` and `CTEUNPOP_456`
 so the analyzer can report retention for popular and unpopular entries.
 
+The default durations can be changed with `HOTCOLD_SECONDS` and
+`SELECT_SECONDS`.  Individual workload groups can be disabled with
+`RUN_HOTCOLD_100M=0`, `RUN_HOTCOLD_1500=0`, or `RUN_SELECT_ONLY=0`.
+
 ## What gets captured
 
 For each timed run the script records:
@@ -62,12 +81,13 @@ For each timed run the script records:
 - `iostat`, if available
 - final `benchmark_analyze.sql` output
 
-The 5-second retention scan groups statements into `pop`, `unpop`,
-`select_only`, `other`, and `null_query` buckets.  It also records
-`pg_stat_statements_info` counters when the tested commit exposes them, and the
-summary reports sampled min/max values for entry DSA and query-text storage.
-This keeps the run honest about whether the cache is preserving the useful
-statements, not just producing good TPS.
+The retention scan waits briefly after each run starts, then samples every 5
+seconds by default.  It groups statements into `pop`, `unpop`, `select_only`,
+`other`, and `null_query` buckets.  It also records
+`pg_stat_statements_info` counters when the tested commit exposes them.  The
+summary reports sampled min/avg/max values for entries, retention buckets,
+entry DSA, and query-text storage.  This keeps the run honest about whether the
+cache is preserving useful statements, not just producing good TPS.
 
 The runner also appends one row per run to `summary.tsv`.
 
@@ -93,6 +113,9 @@ Useful overrides:
 ```sh
 COMMITS="patched_commit baseline_commit" ./run_pgss_benchmark_suite.sh
 CLIENTS="32 64 128 256" ./run_pgss_benchmark_suite.sh
+SELECT_CLIENTS="1 2 4 8 16 32 64 128 256" ./run_pgss_benchmark_suite.sh
+HOTCOLD_SECONDS=300 SELECT_SECONDS=300 ./run_pgss_benchmark_suite.sh
+RUN_HOTCOLD_1500=0 ./run_pgss_benchmark_suite.sh
 PGSS_SAMPLE_SECONDS=5 ./run_pgss_benchmark_suite.sh
 RESULT_ROOT=/tmp/pgss_results ./run_pgss_benchmark_suite.sh
 ```
@@ -103,6 +126,7 @@ Defaults assume this local layout:
 PG_WORKTREE=$HOME/pgdev/installations/worktrees/dev
 PREFIX=$HOME/pgdev/installations
 WORKTREE_NAME=dev
+BUILD_DIR=$PG_WORKTREE/build-release
 PGPORT=5432
 PGUSER=postgres
 PGDATABASE=postgres
@@ -112,9 +136,12 @@ The build/reset recipe per commit is:
 
 ```sh
 git checkout <commit>
-ninja -C build clean
-ninja -C build install
-~/build --skip-build --worktree-name dev --release
+meson configure "$BUILD_DIR"   # verify release/perf settings
+ninja -C "$BUILD_DIR" clean
+ninja -C "$BUILD_DIR" install
+rm -rf "$PGDATA"
+initdb -D "$PGDATA" -U "$PGUSER" --data-checksums
+pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" -w start
 ```
 
 After the cluster is recreated, the script sets:
@@ -160,8 +187,7 @@ summary.tsv
 commit  workload  clients  threads  duration_s  status  tps  latency_avg_ms  failed
 ```
 
-It also includes high-water retention columns and sampled min/max storage
-columns:
+It also includes retention, churn, and storage columns:
 
 ```text
 max_entries  max_pop_entries  max_unpop_entries  max_select_entries
@@ -169,7 +195,15 @@ max_other_entries  max_entry_dealloc
 min_entry_dsa_size  max_entry_dsa_size
 min_qtext_dsa_size  max_qtext_dsa_size
 min_qtext_count  max_qtext_count
-min_qtext_total_len  max_qtext_total_len  outdir
+min_qtext_total_len  max_qtext_total_len
+sample_count
+avg_entries  avg_pop_entries  avg_unpop_entries
+avg_select_entries  avg_other_entries
+avg_qtext_count  avg_qtext_total_len
+min_entries  min_pop_entries  min_unpop_entries
+min_select_entries  min_other_entries
+avg_entry_dsa_size  avg_qtext_dsa_size
+outdir
 ```
 
 The raw logs are kept so the run can be inspected later without rerunning the
