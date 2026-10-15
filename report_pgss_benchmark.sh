@@ -36,6 +36,128 @@ read -r patched_commit baseline_commit < <(
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 wait_summary="$tmpdir/wait_summary.tsv"
+summary_for_report="$tmpdir/summary.tsv"
+
+extract_final_info_values() {
+  local outdir="$1"
+  local final_info="$outdir/final_info.tsv"
+  local analyze="$outdir/analyze.out"
+
+  if [[ -s "$final_info" ]]; then
+    awk -F $'\t' '
+      NR == 1 {
+        for (i = 1; i <= NF; i++)
+          col[$i] = i
+        next
+      }
+      NF > 0 {
+        printf "%d\t%d\t%d\t%d\t%d\t%d\n",
+               ("final_entry_dealloc" in col) ? $(col["final_entry_dealloc"]) : 0,
+               ("final_entry_count" in col) ? $(col["final_entry_count"]) : 0,
+               ("final_entry_dsa_size" in col) ? $(col["final_entry_dsa_size"]) : 0,
+               ("final_qtext_dsa_size" in col) ? $(col["final_qtext_dsa_size"]) : 0,
+               ("final_qtext_count" in col) ? $(col["final_qtext_count"]) : 0,
+               ("final_qtext_total_len" in col) ? $(col["final_qtext_total_len"]) : 0
+        found = 1
+        exit
+      }
+      END {
+        if (!found)
+          print "0\t0\t0\t0\t0\t0"
+      }' "$final_info"
+    return
+  fi
+
+  if [[ -s "$analyze" ]]; then
+    awk '
+      function trim(s) {
+        gsub(/^[[:space:]]+/, "", s)
+        gsub(/[[:space:]]+$/, "", s)
+        return s
+      }
+      function get(name) {
+        return (name in val) ? val[name] + 0 : 0
+      }
+      $0 == "pg_stat_statements_info" {
+        in_info = 1
+        next
+      }
+      in_info && header == "" && $0 ~ /\|/ {
+        header = $0
+        next
+      }
+      in_info && header != "" && $0 ~ /\|/ {
+        n = split(header, h, "|")
+        split($0, v, "|")
+        for (i = 1; i <= n; i++)
+          val[trim(h[i])] = trim(v[i])
+        dealloc = ("entry_dealloc" in val) ? get("entry_dealloc") : get("dealloc")
+        printf "%d\t%d\t%d\t%d\t%d\t%d\n",
+               dealloc, get("entry_count"), get("entry_dsa_size"),
+               get("qtext_dsa_size"), get("qtext_count"),
+               get("qtext_total_len")
+        found = 1
+        exit
+      }
+      END {
+        if (!found)
+          print "0\t0\t0\t0\t0\t0"
+      }' "$analyze"
+    return
+  fi
+
+  printf "0\t0\t0\t0\t0\t0\n"
+}
+
+augment_summary_with_final_info() {
+  local input="$1"
+  local output="$2"
+  local header
+  local -a cols fields
+  local outdir_idx=-1 final_idx=-1
+  local commit_idx=-1 workload_idx=-1 clients_idx=-1
+  local outdir
+  local i line final_values
+
+  IFS= read -r header < "$input"
+  IFS=$'\t' read -r -a cols <<< "$header"
+  for ((i = 0; i < ${#cols[@]}; i++)); do
+    [[ "${cols[$i]}" == "commit" ]] && commit_idx="$i"
+    [[ "${cols[$i]}" == "workload" ]] && workload_idx="$i"
+    [[ "${cols[$i]}" == "clients" ]] && clients_idx="$i"
+    [[ "${cols[$i]}" == "outdir" ]] && outdir_idx="$i"
+    [[ "${cols[$i]}" == "final_entry_dealloc" ]] && final_idx="$i"
+  done
+
+  if ((final_idx >= 0)); then
+    cp "$input" "$output"
+    return
+  fi
+
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$header" final_entry_dealloc final_entry_count final_entry_dsa_size \
+    final_qtext_dsa_size final_qtext_count final_qtext_total_len \
+    >"$output"
+
+  tail -n +2 "$input" |
+  while IFS= read -r line; do
+    IFS=$'\t' read -r -a fields <<< "$line"
+    if ((outdir_idx >= 0 && outdir_idx < ${#fields[@]})); then
+      outdir="${fields[$outdir_idx]}"
+      if [[ ! -d "$outdir" &&
+            "$commit_idx" -ge 0 && "$workload_idx" -ge 0 &&
+            "$clients_idx" -ge 0 ]]; then
+        outdir="$RESULT_DIR/${fields[$commit_idx]}/${fields[$workload_idx]}/c${fields[$clients_idx]}"
+      fi
+      final_values="$(extract_final_info_values "$outdir")"
+    else
+      final_values="0	0	0	0	0	0"
+    fi
+    printf "%s\t%s\n" "$line" "$final_values" >>"$output"
+  done
+}
+
+augment_summary_with_final_info "$summary" "$summary_for_report"
 
 find "$RESULT_DIR" -path '*/waits.tsv' -type f | sort |
 while IFS= read -r file; do
@@ -193,6 +315,12 @@ function waitcell(commit, workload, field) {
   return waits[commit SUBSEP workload SUBSEP field] + 0
 }
 
+function maxnum(a, b) {
+  if (a > b)
+    return a
+  return b
+}
+
 function print_throughput(workload, i, clients, p, b) {
   if (!have_workload(workload))
     return
@@ -297,6 +425,12 @@ FNR == NR {
   data[key SUBSEP "entry_dsa_avg"] = \
     ("avg_entry_dsa_size" in col) ? fieldnum("avg_entry_dsa_size") : fieldnum("max_entry_dsa_size")
   data[key SUBSEP "entry_dsa_max"] = fieldnum("max_entry_dsa_size")
+  data[key SUBSEP "final_entry_dealloc"] = fieldnum("final_entry_dealloc")
+  data[key SUBSEP "final_entry_count"] = fieldnum("final_entry_count")
+  data[key SUBSEP "final_entry_dsa_size"] = fieldnum("final_entry_dsa_size")
+  data[key SUBSEP "final_qtext_dsa_size"] = fieldnum("final_qtext_dsa_size")
+  data[key SUBSEP "final_qtext_count"] = fieldnum("final_qtext_count")
+  data[key SUBSEP "final_qtext_total_len"] = fieldnum("final_qtext_total_len")
 
   duration[workload] = $col["duration_s"] + 0
   clients_seen[clients] = 1
@@ -336,9 +470,14 @@ END {
       pop = cell(patched, workload, clients, "pop")
       if (!min_pop || pop < min_pop)
         min_pop = pop
-      qtext = cell(patched, workload, clients, "qtext")
+      qtext = maxnum(cell(patched, workload, clients, "qtext"),
+                     cell(patched, workload, clients, "final_qtext_count"))
       if (qtext > max_qtext[workload])
         max_qtext[workload] = qtext
+      entry_dsa = maxnum(cell(patched, workload, clients, "entry_dsa_max"),
+                         cell(patched, workload, clients, "final_entry_dsa_size"))
+      if (entry_dsa > max_entry_dsa)
+        max_entry_dsa = entry_dsa
     }
   }
 
@@ -378,7 +517,7 @@ END {
     print "- select_only changed by " highselect \
           " across reported non-single-client points."
   if (min_pop)
-    print "- Patched retained at least " nfmt(min_pop) \
+    print "- Successful retention samples retained at least " nfmt(min_pop) \
           " popular statements at every reported churn point."
   qtext_line = ""
   for (w = 1; w <= 2; w++) {
@@ -390,7 +529,11 @@ END {
     qtext_line = qtext_line nfmt(max_qtext[workload]) " for " workload
   }
   if (qtext_line != "")
-    print "- Patched qtext_count high-water was " qtext_line "."
+    print "- Patched qtext_count high-water from samples/final info was " \
+          qtext_line "."
+  if (max_entry_dsa > 0)
+    print "- Patched entry DSA high-water from samples/final info was " \
+          bytefmt(max_entry_dsa) "."
   print "- Baseline churn sampled " nfmt(baseline_churn_pgss) \
         " pg_stat_statements LWLock waits; patched sampled " \
         nfmt(patched_churn_pgss) "."
@@ -460,9 +603,9 @@ END {
   }
   print ""
 
-  print "## Query Text And Churn"
+  print "## Sampled Query Text And Churn"
   print ""
-  print "Query-text and memory values are sampled min/avg/max."
+  print "Query-text and memory values from periodic samples are min/avg/max."
   print "Memory values use human-readable IEC units."
   print ""
   print "| workload | clients | patched qtext count | patched qtext payload min/avg/max |" \
@@ -490,6 +633,33 @@ END {
                           cell(patched, workload, clients, "entry_dsa_max")) " | " \
             nfmt(cell(patched, workload, clients, "dealloc")) " | " \
             nfmt(cell(baseline, workload, clients, "dealloc")) " |"
+    }
+  }
+  print ""
+
+  print "## Final Gauges"
+  print ""
+  print "Final values from pg_stat_statements_info, captured after each pgbench run."
+  print "These do not require scanning the pg_stat_statements view."
+  print ""
+  print "| workload | clients | patched final entries | patched final qtext count |" \
+        " patched final qtext payload | patched final qtext DSA |" \
+        " patched final entry DSA | patched final dealloc | baseline final dealloc |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  for (w = 1; w <= 3; w++) {
+    workload = workload_order[w]
+    for (i = 1; i <= nwanted; i++) {
+      clients = wanted_clients[i]
+      if (!have_pair(workload, clients))
+        continue
+      print "| " workload " | " clients " | " \
+            nfmt(cell(patched, workload, clients, "final_entry_count")) " | " \
+            nfmt(cell(patched, workload, clients, "final_qtext_count")) " | " \
+            bytefmt(cell(patched, workload, clients, "final_qtext_total_len")) " | " \
+            bytefmt(cell(patched, workload, clients, "final_qtext_dsa_size")) " | " \
+            bytefmt(cell(patched, workload, clients, "final_entry_dsa_size")) " | " \
+            nfmt(cell(patched, workload, clients, "final_entry_dealloc")) " | " \
+            nfmt(cell(baseline, workload, clients, "final_entry_dealloc")) " |"
     }
   }
   print ""
@@ -540,6 +710,9 @@ END {
   print "  not expose them report zero in summary.tsv."
   print "- The Markdown report prints memory with IEC units; summary.tsv keeps"
   print "  raw byte counts for scripts."
+  print "- Final gauges come from pg_stat_statements_info after each pgbench run;"
+  print "  they avoid scanning the full view, so they still work when churn"
+  print "  creates too many rows for pg_stat_statements to materialize."
   print "- Each commit reuses the same PostgreSQL server across workload groups,"
   print "  so select_only storage gauges can include DSA space allocated by"
   print "  earlier churn runs."
@@ -551,4 +724,4 @@ END {
   print "- Under churn, SpinDelay was smaller than the baseline"
   print "  pg_stat_statements LWLock bottleneck."
 }
-' "$summary" "$wait_summary"
+' "$summary_for_report" "$wait_summary"

@@ -97,6 +97,11 @@ summary reports sampled min/avg/max values for entries, retention buckets,
 entry DSA, and query-text storage.  This keeps the run honest about whether the
 cache is preserving useful statements, not just producing good TPS.
 
+After each pgbench run, the runner also captures `pg_stat_statements_info`
+into `final_info.tsv` before running any expensive full-view analysis.  Those
+final gauges still work when `pg_stat_statements` has too many rows for the
+view scan to materialize.
+
 The runner also appends one row per run to `summary.tsv`.
 
 ## Run
@@ -184,6 +189,8 @@ summary.tsv
   vmstat.log
   pidstat.log
   iostat.log
+  final_info.tsv
+  final_info.err
   analyze.out
   analyze.err
   server_log_tail.log
@@ -211,6 +218,8 @@ avg_qtext_count  avg_qtext_total_len
 min_entries  min_pop_entries  min_unpop_entries
 min_select_entries  min_other_entries
 avg_entry_dsa_size  avg_qtext_dsa_size
+final_entry_dealloc  final_entry_count  final_entry_dsa_size
+final_qtext_dsa_size  final_qtext_count  final_qtext_total_len
 outdir
 ```
 
@@ -234,5 +243,8 @@ report prints memory in human-readable units; `summary.tsv` keeps raw byte
 counts for scripts.  The report labels the first commit in `summary.tsv` as
 `patched` and the second as `baseline`.  `PATCHED_LABEL`, `BASELINE_LABEL`,
 `PATCHED_URL`, and `BASELINE_URL` can be set when generating a published
-report.  The wait-event `cpu/no wait` column is active backends with no
-PostgreSQL wait event reported; it is not sampled from OS CPU counters.
+report.  Reports include a final-gauges table from `pg_stat_statements_info`;
+that table is preferred for end-of-run memory and entry counts because it does
+not scan the full `pg_stat_statements` view.  The wait-event `cpu/no wait`
+column is active backends with no PostgreSQL wait event reported; it is not
+sampled from OS CPU counters.

@@ -362,9 +362,66 @@ extract_monitor_summary() {
     }' "$file"
 }
 
+capture_final_info() {
+  local outdir="$1"
+
+  printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+    final_entry_dealloc final_entry_count final_entry_dsa_size \
+    final_qtext_dsa_size final_qtext_count final_qtext_total_len \
+    >"$outdir/final_info.tsv"
+
+  sql_at -c "
+    with info as (
+      select to_jsonb(i) as j
+      from pg_stat_statements_info as i
+    )
+    select coalesce((j->>'entry_dealloc')::bigint,
+                    (j->>'dealloc')::bigint,
+                    0),
+           coalesce((j->>'entry_count')::bigint, 0),
+           coalesce((j->>'entry_dsa_size')::bigint, 0),
+           coalesce((j->>'qtext_dsa_size')::bigint, 0),
+           coalesce((j->>'qtext_count')::bigint, 0),
+           coalesce((j->>'qtext_total_len')::bigint, 0)
+    from info;" >>"$outdir/final_info.tsv" 2>"$outdir/final_info.err" || true
+}
+
+extract_final_info_summary() {
+  local file="$1"
+
+  if [[ ! -s "$file" ]]; then
+    printf "0\t0\t0\t0\t0\t0\n"
+    return
+  fi
+
+  awk -F $'\t' '
+    NR == 1 {
+      for (i = 1; i <= NF; i++)
+        col[$i] = i
+      next
+    }
+    NF > 0 {
+      printf "%d\t%d\t%d\t%d\t%d\t%d\n",
+             ("final_entry_dealloc" in col) ? $(col["final_entry_dealloc"]) : 0,
+             ("final_entry_count" in col) ? $(col["final_entry_count"]) : 0,
+             ("final_entry_dsa_size" in col) ? $(col["final_entry_dsa_size"]) : 0,
+             ("final_qtext_dsa_size" in col) ? $(col["final_qtext_dsa_size"]) : 0,
+             ("final_qtext_count" in col) ? $(col["final_qtext_count"]) : 0,
+             ("final_qtext_total_len" in col) ? $(col["final_qtext_total_len"]) : 0
+      found = 1
+      exit
+    }
+    END {
+      if (!found)
+        print "0\t0\t0\t0\t0\t0"
+    }' "$file"
+}
+
 append_summary() {
   local commit="$1" workload="$2" clients="$3" threads="$4" duration="$5" status="$6" outdir="$7"
   local tps latency failed
+  local -a values
+  local i
   local max_entries max_pop max_unpop max_select max_other
   local max_entry_dealloc min_entry_dsa_size max_entry_dsa_size
   local min_qtext_dsa_size max_qtext_dsa_size min_qtext_count
@@ -373,6 +430,8 @@ append_summary() {
   local avg_qtext_count avg_qtext_total_len
   local min_entries min_pop min_unpop min_select min_other
   local avg_entry_dsa_size avg_qtext_dsa_size
+  local final_entry_dealloc final_entry_count final_entry_dsa_size
+  local final_qtext_dsa_size final_qtext_count final_qtext_total_len
 
   tps="$(extract_pgbench_field "$outdir/pgbench.log" tps)"
   latency="$(extract_pgbench_field "$outdir/pgbench.log" latency)"
@@ -388,19 +447,33 @@ append_summary() {
     avg_entry_dsa_size avg_qtext_dsa_size \
     < <(extract_monitor_summary "$outdir/monitor_pgss.tsv")
 
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-    "$commit" "$workload" "$clients" "$threads" "$duration" "$status" \
-    "${tps:-}" "${latency:-}" "${failed:-}" \
-    "$max_entries" "$max_pop" "$max_unpop" "$max_select" "$max_other" \
-    "$max_entry_dealloc" "$min_entry_dsa_size" "$max_entry_dsa_size" \
-    "$min_qtext_dsa_size" "$max_qtext_dsa_size" \
-    "$min_qtext_count" "$max_qtext_count" \
-    "$min_qtext_total_len" "$max_qtext_total_len" \
-    "$sample_count" "$avg_entries" "$avg_pop" "$avg_unpop" \
-    "$avg_select" "$avg_other" "$avg_qtext_count" "$avg_qtext_total_len" \
-    "$min_entries" "$min_pop" "$min_unpop" "$min_select" "$min_other" \
-    "$avg_entry_dsa_size" "$avg_qtext_dsa_size" \
-    "$outdir" >>"$summary"
+  IFS=$'\t' read -r final_entry_dealloc final_entry_count \
+    final_entry_dsa_size final_qtext_dsa_size final_qtext_count \
+    final_qtext_total_len \
+    < <(extract_final_info_summary "$outdir/final_info.tsv")
+
+  values=(
+    "$commit" "$workload" "$clients" "$threads" "$duration" "$status"
+    "${tps:-}" "${latency:-}" "${failed:-}"
+    "$max_entries" "$max_pop" "$max_unpop" "$max_select" "$max_other"
+    "$max_entry_dealloc" "$min_entry_dsa_size" "$max_entry_dsa_size"
+    "$min_qtext_dsa_size" "$max_qtext_dsa_size"
+    "$min_qtext_count" "$max_qtext_count"
+    "$min_qtext_total_len" "$max_qtext_total_len"
+    "$sample_count" "$avg_entries" "$avg_pop" "$avg_unpop"
+    "$avg_select" "$avg_other" "$avg_qtext_count" "$avg_qtext_total_len"
+    "$min_entries" "$min_pop" "$min_unpop" "$min_select" "$min_other"
+    "$avg_entry_dsa_size" "$avg_qtext_dsa_size"
+    "$final_entry_dealloc" "$final_entry_count" "$final_entry_dsa_size"
+    "$final_qtext_dsa_size" "$final_qtext_count" "$final_qtext_total_len"
+    "$outdir"
+  )
+
+  printf "%s" "${values[0]}" >>"$summary"
+  for ((i = 1; i < ${#values[@]}; i++)); do
+    printf "\t%s" "${values[$i]}" >>"$summary"
+  done
+  printf "\n" >>"$summary"
 }
 
 run_pgbench_capture() {
@@ -429,6 +502,7 @@ run_pgbench_capture() {
   set -e
   stop_samplers
 
+  capture_final_info "$outdir"
   sql -f "$SCRIPT_DIR/benchmark_analyze.sql" >"$outdir/analyze.out" 2>"$outdir/analyze.err" || true
   tail -n 200 "$PGDATA/logfile" >"$outdir/server_log_tail.log" 2>/dev/null || true
   append_summary "$commit" "$workload" "$clients" "$threads" "$duration" "$status" "$outdir"
@@ -472,12 +546,15 @@ run_select_only_ladder() {
 }
 
 main() {
+  local -a header
+  local i
+
   check_worktree_clean
   original_ref="$(git -C "$PG_WORKTREE" symbolic-ref --short -q HEAD || git -C "$PG_WORKTREE" rev-parse HEAD)"
   trap checkout_original_on_exit EXIT
 
   mkdir -p "$RESULT_ROOT"
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+  header=(
     commit workload clients threads duration_s status tps latency_avg_ms \
     failed max_entries max_pop_entries max_unpop_entries max_select_entries \
     max_other_entries max_entry_dealloc min_entry_dsa_size \
@@ -487,8 +564,15 @@ main() {
     avg_unpop_entries avg_select_entries avg_other_entries \
     avg_qtext_count avg_qtext_total_len min_entries min_pop_entries \
     min_unpop_entries min_select_entries min_other_entries \
-    avg_entry_dsa_size avg_qtext_dsa_size outdir \
-    >"$summary"
+    avg_entry_dsa_size avg_qtext_dsa_size \
+    final_entry_dealloc final_entry_count final_entry_dsa_size \
+    final_qtext_dsa_size final_qtext_count final_qtext_total_len outdir \
+  )
+  printf "%s" "${header[0]}" >"$summary"
+  for ((i = 1; i < ${#header[@]}; i++)); do
+    printf "\t%s" "${header[$i]}" >>"$summary"
+  done
+  printf "\n" >>"$summary"
 
   for commit in "${COMMITS[@]}"; do
     build_and_start_commit "$commit"
