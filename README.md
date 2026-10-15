@@ -13,6 +13,13 @@ The runner checks out each commit, installs from a release/perf Meson build,
 creates a fresh local cluster, enables `pg_stat_statements`, and runs the
 configured client-count ladder for each workload.
 
+## Published Results
+
+- [EC2 c7i.8xlarge run, 2026-10-15](reports/2026-10-15-ec2-c7i-8xlarge.md):
+  `pg_stat_statements_v14` versus PostgreSQL master, 500 seconds per point,
+  with churn throughput up by as much as 87.3% and `select_only` essentially
+  unchanged.
+
 ## Requirements
 
 The runner uses PostgreSQL's Meson/Ninja build.  By default it expects the
