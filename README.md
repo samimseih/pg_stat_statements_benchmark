@@ -15,11 +15,13 @@ configured client-count ladder for each workload.
 
 ## Published Results
 
-- [EC2 c7i.8xlarge run, 2026-10-15](reports/2026-10-15-ec2-c7i-8xlarge.md):
-  `pg_stat_statements_v14` versus PostgreSQL master, 500 seconds per point,
-  with churn throughput up by as much as 87.3% and `select_only` essentially
-  unchanged.  Retention and memory triples in the report are sampled
-  `min/avg/max` values; memory values are shown in human-readable units.
+- [EC2 c7i.8xlarge run, 2026-10-16](reports/2026-10-16-ec2-c7i-8xlarge.md):
+  `pg_stat_statements_v14` versus PostgreSQL master, 1600 seconds per point,
+  with churn throughput up by as much as 109.9% and `select_only` between
+  -4.3% and +3.9%.  Popular retention held at 4000/4000, and patched
+  qtext_count high-water was 5,501.  Retention and memory triples in the
+  report are sampled `min/avg/max` values; memory values are shown in
+  human-readable units.
 
 ## Requirements
 
