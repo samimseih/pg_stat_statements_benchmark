@@ -30,6 +30,7 @@ SELECT_SCALE="${SELECT_SCALE:-10}"
 SELECT_WARMUP_SECONDS="${SELECT_WARMUP_SECONDS:-30}"
 
 PGSS_MAX="${PGSS_MAX:-5000}"
+PGSS_QUERY_TEXT_MEMORY="${PGSS_QUERY_TEXT_MEMORY:-}"
 MAX_CONNECTIONS="${MAX_CONNECTIONS:-300}"
 
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -90,6 +91,11 @@ ALTER SYSTEM SET max_connections = '$MAX_CONNECTIONS';
 SQL
 
   "$PGHOME/bin/pg_ctl" -D "$PGDATA" -m fast -w -l "$PGDATA/logfile" restart
+  if [[ -n "$PGSS_QUERY_TEXT_MEMORY" &&
+        "$(sql_at -c "select count(*) from pg_settings where name = 'pg_stat_statements.query_text_memory';")" == "1" ]]; then
+    sql -c "ALTER SYSTEM SET pg_stat_statements.query_text_memory = '$PGSS_QUERY_TEXT_MEMORY';"
+    sql -q -c "select pg_reload_conf();" >/dev/null
+  fi
   sql -q -c "create extension if not exists pg_stat_statements;" >/dev/null
   reset_pgss
 }
@@ -579,7 +585,7 @@ main() {
     short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
     mkdir -p "$RESULT_ROOT/$short_commit"
     git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
-    sql -c "select name, setting from pg_settings where name in ('shared_preload_libraries', 'pg_stat_statements.max', 'max_connections') order by 1;" \
+    sql -c "select name, setting from pg_settings where name in ('shared_preload_libraries', 'pg_stat_statements.max', 'pg_stat_statements.query_text_memory', 'max_connections') order by 1;" \
       >"$RESULT_ROOT/$short_commit/settings.out"
 
     if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then

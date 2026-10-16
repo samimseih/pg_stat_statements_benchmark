@@ -132,6 +132,7 @@ SELECT_CLIENTS="1 2 4 8 16 32 64 128 256" ./run_pgss_benchmark_suite.sh
 HOTCOLD_SECONDS=300 SELECT_SECONDS=300 ./run_pgss_benchmark_suite.sh
 RUN_HOTCOLD_1500=0 ./run_pgss_benchmark_suite.sh
 PGSS_SAMPLE_SECONDS=5 ./run_pgss_benchmark_suite.sh
+PGSS_QUERY_TEXT_MEMORY=1GB ./run_pgss_benchmark_suite.sh
 RESULT_ROOT=/tmp/pgss_results ./run_pgss_benchmark_suite.sh
 ```
 
@@ -166,6 +167,9 @@ ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements';
 ALTER SYSTEM SET pg_stat_statements.max = 5000;
 ALTER SYSTEM SET max_connections = 300;
 ```
+
+Set `PGSS_QUERY_TEXT_MEMORY` to also set
+`pg_stat_statements.query_text_memory` for patches that expose that GUC.
 
 Then it restarts the cluster and creates the extension.
 
