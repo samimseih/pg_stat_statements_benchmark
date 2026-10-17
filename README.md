@@ -17,7 +17,8 @@ configured client-count ladder for each workload.
 
 | date | run | benchmark | comparison | headline | results |
 | --- | --- | --- | --- | --- | --- |
-| 2026-10-16 | EC2 `c7i.8xlarge` | `hotcold_100m` churn and `select_only`, clients `1..256`, 1600 seconds per point | `pg_stat_statements_v14` vs PostgreSQL master | Churn TPS improved by up to +109.9%; `select_only` stayed between -4.3% and +3.9%. Popular retention held at 4000/4000, patched `qtext_count` high-water was 5,501, and baseline sampled 410,946 `pg_stat_statements` LWLock waits while patched sampled 0. | [report](reports/2026-10-16-ec2-c7i-8xlarge.md) |
+| 2026-10-16 | EC2 `c7i.8xlarge` | `hotcold_100m` churn and `select_only`, clients `1..256`, 1600 seconds per point | `pg_stat_statements_v14` with default `query_text_memory` vs PostgreSQL master | Churn TPS improved by up to +109.9%; `select_only` stayed between -4.3% and +3.9%. Popular retention held at 4000/4000, patched `qtext_count` high-water was 5,501, and baseline sampled 410,946 `pg_stat_statements` LWLock waits while patched sampled 0. | [report](reports/2026-10-16-ec2-c7i-8xlarge.md) |
+| 2026-10-17 | EC2 `c7i.8xlarge` | `hotcold_100m` churn and `select_only`, clients `1..256`, 1600 seconds per point | `pg_stat_statements_v14` with `query_text_memory=1GB` vs PostgreSQL master | Churn TPS improved by up to +105.3%; `select_only` stayed between -2.9% and +0.7%. Popular retention held at 4000/4000, patched `qtext_count` high-water was 5,501, and baseline sampled 409,092 `pg_stat_statements` LWLock waits while patched sampled 0. | [report](reports/2026-10-17-ec2-c7i-8xlarge-qtext1gb.md) |
 
 Retention and memory triples in the reports are sampled `min/avg/max` values;
 memory values are shown in human-readable units.
