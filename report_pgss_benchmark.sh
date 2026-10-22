@@ -210,6 +210,12 @@ function pct(patched, baseline) {
   return sprintf("%+.1f%%", (patched / baseline - 1) * 100)
 }
 
+function pctdiff(patched, baseline) {
+  if (baseline == 0)
+    return patched == 0 ? "0.0%" : "new"
+  return sprintf("%+.1f%%", (patched / baseline - 1) * 100)
+}
+
 function pctnum(patched, baseline) {
   if (baseline == 0)
     return 0
@@ -245,6 +251,14 @@ function nfmt(n, s, out) {
     s = substr(s, 1, length(s) - 3)
   }
   return s out
+}
+
+function signedfmt(n) {
+  if (n > 0)
+    return "+" nfmt(n)
+  if (n < 0)
+    return "-" nfmt(-n)
+  return "0"
 }
 
 function rangefmt(min, max) {
@@ -359,6 +373,29 @@ function print_wait_row(workload, commit) {
         nfmt(waitcell(commit, workload, "spin")) " | " \
         nfmt(waitcell(commit, workload, "client")) " | " \
         nfmt(waitcell(commit, workload, "cpu")) " |"
+}
+
+function print_wait_delta_row(workload, field, event, baseline_samples, patched_samples) {
+  baseline_samples = waitcell(baseline, workload, field)
+  patched_samples = waitcell(patched, workload, field)
+  if (baseline_samples == 0 && patched_samples == 0)
+    return
+
+  print "| " workload " | " event " | " nfmt(baseline_samples) " | " \
+        nfmt(patched_samples) " | " \
+        signedfmt(patched_samples - baseline_samples) " | " \
+        pctdiff(patched_samples, baseline_samples) " |"
+}
+
+function print_wait_delta_table(workload) {
+  print_wait_delta_row(workload, "total", "active samples")
+  print_wait_delta_row(workload, "pgss", "pg_stat_statements LWLock")
+  print_wait_delta_row(workload, "dsa", "PgStatsDSA LWLock")
+  print_wait_delta_row(workload, "hash", "PgStatsHash LWLock")
+  print_wait_delta_row(workload, "qtext", "query-text LWLock")
+  print_wait_delta_row(workload, "spin", "SpinDelay")
+  print_wait_delta_row(workload, "client", "ClientRead")
+  print_wait_delta_row(workload, "cpu", "cpu/no wait")
 }
 
 BEGIN {
@@ -698,6 +735,20 @@ END {
       continue
     print_wait_row(workload, baseline)
     print_wait_row(workload, patched)
+  }
+  print ""
+
+  print "## Wait Event Diffs"
+  print ""
+  print "Values are patched minus baseline sample counts from the same run."
+  print ""
+  print "| workload | event | baseline samples | patched samples | delta | change |"
+  print "| --- | --- | ---: | ---: | ---: | ---: |"
+  for (w = 1; w <= 3; w++) {
+    workload = workload_order[w]
+    if (!have_workload(workload))
+      continue
+    print_wait_delta_table(workload)
   }
   print ""
 
