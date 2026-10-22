@@ -21,8 +21,6 @@ throughput, retention, query-text memory, and wait-event diffs.
 | date | run | what it compares | results |
 | --- | --- | --- | --- |
 | 2026-10-21 | EC2 `c7i.8xlarge`, 600 seconds per point, clients `1..256` | PostgreSQL master vs `customstats`, and PostgreSQL master vs `customstats + DSA query text` | [analysis](reports/2026-10-21-ec2-c7i-8xlarge-600s.md) |
-| 2026-10-17 | EC2 `c7i.8xlarge`, 1600 seconds per point, clients `1..256` | `pg_stat_statements_v14` with patched `query_text_memory=1GB` vs PostgreSQL master | [analysis](reports/2026-10-17-ec2-c7i-8xlarge-qtext1gb.md) |
-| 2026-10-16 | EC2 `c7i.8xlarge`, 1600 seconds per point, clients `1..256` | `pg_stat_statements_v14` with default `query_text_memory` vs PostgreSQL master | [analysis](reports/2026-10-16-ec2-c7i-8xlarge.md) |
 
 Each result page compares the patched build with the PostgreSQL master
 baseline from the same EC2 run.  Retention and memory triples in the reports
