@@ -15,8 +15,8 @@
 
 | item | value |
 | --- | --- |
-| result directory | `EC2 c7i.8xlarge run pgss-customstats-600s-master-20261021T1045Z` |
-| patched | [`c0f1ee3f8fb4`](https://github.com/samimseih/postgres/commit/c0f1ee3f8fb46b6c370251201e9d8cf3f030fe4b) - custom pgstat entries |
+| result directory | `EC2 c7i.8xlarge run, customstats, 2026-10-21T1045Z` |
+| patched | [`c0f1ee3f8fb4`](https://github.com/samimseih/postgres/commit/c0f1ee3f8fb46b6c370251201e9d8cf3f030fe4b) - customstats |
 | baseline | [`6b9f40d49ae3`](https://github.com/postgres/postgres/commit/6b9f40d49ae3) - PostgreSQL master |
 | hot/cold duration | 600 seconds per point |
 | select-only duration | 600 seconds per point |

@@ -33,6 +33,38 @@ read -r patched_commit baseline_commit < <(
 [[ -n "$patched_commit" && -n "$baseline_commit" ]] ||
   die "summary.tsv must contain patched and baseline commits"
 
+read_guc_setting() {
+  local commit="$1" name="$2" file
+
+  file="$RESULT_DIR/$commit/settings.out"
+
+  [[ -s "$file" ]] || return 0
+
+  awk -F '|' -v name="$name" '
+    function trim(s) {
+      gsub(/^[[:space:]]+/, "", s)
+      gsub(/[[:space:]]+$/, "", s)
+      return s
+    }
+    NF >= 2 && trim($1) == name {
+      value = trim($2)
+      unit = NF >= 3 ? trim($3) : ""
+      print value "\t" unit
+      exit
+    }' "$file"
+}
+
+patched_qtext_memory_setting="$(
+  read_guc_setting "$patched_commit" "pg_stat_statements.query_text_memory" || true
+)"
+baseline_qtext_memory_setting="$(
+  read_guc_setting "$baseline_commit" "pg_stat_statements.query_text_memory" || true
+)"
+IFS=$'\t' read -r patched_qtext_memory patched_qtext_memory_unit \
+  <<<"$patched_qtext_memory_setting"
+IFS=$'\t' read -r baseline_qtext_memory baseline_qtext_memory_unit \
+  <<<"$baseline_qtext_memory_setting"
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 wait_summary="$tmpdir/wait_summary.tsv"
@@ -203,7 +235,11 @@ awk -F $'\t' \
   -v patched_label_hint="${PATCHED_LABEL:-}" \
   -v baseline_label_hint="${BASELINE_LABEL:-}" \
   -v patched_url_hint="${PATCHED_URL:-}" \
-  -v baseline_url_hint="${BASELINE_URL:-}" '
+  -v baseline_url_hint="${BASELINE_URL:-}" \
+  -v patched_qtext_memory_hint="$patched_qtext_memory" \
+  -v patched_qtext_memory_unit_hint="$patched_qtext_memory_unit" \
+  -v baseline_qtext_memory_hint="$baseline_qtext_memory" \
+  -v baseline_qtext_memory_unit_hint="$baseline_qtext_memory_unit" '
 function pct(patched, baseline) {
   if (baseline == 0)
     return "n/a"
@@ -291,6 +327,14 @@ function bytefmt(n, v, idx, unit) {
   if (v >= 10)
     return sprintf("%.1f %s", v, unit[idx])
   return sprintf("%.2f %s", v, unit[idx])
+}
+
+function gucfmt(value, unit) {
+  if (value == "")
+    return "not available"
+  if (unit == "kB" || unit == "")
+    return bytefmt(value * 1024) " (" nfmt(value) " kB)"
+  return value " " unit
 }
 
 function triplebytefmt(min, avg, max) {
@@ -593,6 +637,12 @@ END {
   print "| select-only duration | " duration["select_only"] \
         " seconds per point |"
   print "| report client points | `" report_clients "` |"
+  if (patched_qtext_memory_hint != "" || baseline_qtext_memory_hint != "") {
+    print "| patched query_text_memory | " \
+          gucfmt(patched_qtext_memory_hint, patched_qtext_memory_unit_hint) " |"
+    print "| baseline query_text_memory | " \
+          gucfmt(baseline_qtext_memory_hint, baseline_qtext_memory_unit_hint) " |"
+  }
   print "| failed pgbench rows | " failed + 0 " |"
   print ""
 

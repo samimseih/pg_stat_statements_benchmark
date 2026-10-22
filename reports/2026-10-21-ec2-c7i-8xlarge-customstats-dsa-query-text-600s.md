@@ -21,6 +21,8 @@
 | hot/cold duration | 600 seconds per point |
 | select-only duration | 600 seconds per point |
 | report client points | `1 2 4 8 16 32 64 128 256` |
+| patched query_text_memory | 4.00 MiB (4,096 kB) |
+| baseline query_text_memory | not available |
 | failed pgbench rows | 0 |
 
 ## Throughput
