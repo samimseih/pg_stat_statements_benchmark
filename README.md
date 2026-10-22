@@ -15,16 +15,19 @@ configured client-count ladder for each workload.
 
 ## Published Results
 
-| date | run | benchmark | comparison | headline | results |
-| --- | --- | --- | --- | --- | --- |
-| 2026-10-16 | EC2 `c7i.8xlarge` | `hotcold_100m` churn and `select_only`, clients `1..256`, 1600 seconds per point | `pg_stat_statements_v14` with default `query_text_memory` vs PostgreSQL master | Churn TPS improved by up to +109.9%; `select_only` stayed between -4.3% and +3.9%. Popular retention held at 4000/4000, patched `qtext_count` high-water was 5,501, and baseline sampled 410,946 `pg_stat_statements` LWLock waits while patched sampled 0. | [report](reports/2026-10-16-ec2-c7i-8xlarge.md) |
-| 2026-10-17 | EC2 `c7i.8xlarge` | Same workload with patched `query_text_memory=1GB` | `pg_stat_statements_v14` vs PostgreSQL master from the same run | Churn TPS improved by up to +105.3%; `select_only` stayed between -2.9% and +0.7%. This workload stayed bounded by the `pg_stat_statements.max` admission threshold: patched `qtext_count` high-water was still 5,501 and qtext payload stayed under 446 KiB. | [report](reports/2026-10-17-ec2-c7i-8xlarge-qtext1gb.md) |
+The README keeps only an index.  The linked pages have the actual analysis:
+throughput, retention, query-text memory, and wait-event diffs.
 
-Each row compares the patched build with the PostgreSQL master baseline from
-the same EC2 run.  The rows should not be read as a strict A/B test of only
-`query_text_memory`, since they were separate EC2 runs and used different
-master baseline commits.  Retention and memory triples in the reports are
-sampled `min/avg/max` values; memory values are shown in human-readable units.
+| date | run | what it compares | results |
+| --- | --- | --- | --- |
+| 2026-10-21 | EC2 `c7i.8xlarge`, 600 seconds per point, clients `1..256` | PostgreSQL master vs `customstats`, and PostgreSQL master vs `customstats + DSA query text` | [analysis](reports/2026-10-21-ec2-c7i-8xlarge-600s.md) |
+| 2026-10-17 | EC2 `c7i.8xlarge`, 1600 seconds per point, clients `1..256` | `pg_stat_statements_v14` with patched `query_text_memory=1GB` vs PostgreSQL master | [analysis](reports/2026-10-17-ec2-c7i-8xlarge-qtext1gb.md) |
+| 2026-10-16 | EC2 `c7i.8xlarge`, 1600 seconds per point, clients `1..256` | `pg_stat_statements_v14` with default `query_text_memory` vs PostgreSQL master | [analysis](reports/2026-10-16-ec2-c7i-8xlarge.md) |
+
+Each result page compares the patched build with the PostgreSQL master
+baseline from the same EC2 run.  Retention and memory triples in the reports
+are sampled `min/avg/max` values; memory values are shown in human-readable
+units.
 
 ## Requirements
 
