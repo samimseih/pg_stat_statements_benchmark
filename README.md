@@ -118,6 +118,11 @@ From this directory:
 ./run_pgss_benchmark_suite.sh
 ```
 
+To launch the suite on EC2, see `ec2-setup/README.md`.  That wrapper creates
+the AWS resources needed for an SSM-only benchmark instance, bootstraps a
+release PostgreSQL build on the instance, runs this benchmark suite there, and
+uploads the result tarball and cloud-init log to S3.
+
 To run it in the background inside `tmux`:
 
 ```sh
