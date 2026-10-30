@@ -502,6 +502,12 @@ FNR == NR {
   data[key SUBSEP "qtext_len_avg"] = \
     ("avg_qtext_total_len" in col) ? fieldnum("avg_qtext_total_len") : fieldnum("max_qtext_total_len")
   data[key SUBSEP "qtext_len_max"] = fieldnum("max_qtext_total_len")
+  data[key SUBSEP "qtext_file_min"] = \
+    ("min_qtext_file_size" in col) ? fieldnum("min_qtext_file_size") : 0
+  data[key SUBSEP "qtext_file_avg"] = \
+    ("avg_qtext_file_size" in col) ? fieldnum("avg_qtext_file_size") : data[key SUBSEP "qtext_file_min"]
+  data[key SUBSEP "qtext_file_max"] = \
+    ("max_qtext_file_size" in col) ? fieldnum("max_qtext_file_size") : data[key SUBSEP "qtext_file_avg"]
   data[key SUBSEP "qtext_dsa_min"] = \
     ("min_qtext_dsa_size" in col) ? fieldnum("min_qtext_dsa_size") : fieldnum("max_qtext_dsa_size")
   data[key SUBSEP "qtext_dsa_avg"] = \
@@ -518,6 +524,8 @@ FNR == NR {
   data[key SUBSEP "final_qtext_dsa_size"] = fieldnum("final_qtext_dsa_size")
   data[key SUBSEP "final_qtext_count"] = fieldnum("final_qtext_count")
   data[key SUBSEP "final_qtext_total_len"] = fieldnum("final_qtext_total_len")
+  data[key SUBSEP "final_qtext_file_size"] = \
+    ("final_qtext_file_size" in col) ? fieldnum("final_qtext_file_size") : 0
 
   duration[workload] = $col["duration_s"] + 0
   clients_seen[clients] = 1
@@ -723,9 +731,10 @@ END {
   print ""
   print "| workload | clients | patched empty query entries | baseline empty query entries |" \
         " patched qtext count | patched qtext payload min/avg/max |" \
+        " patched qtext file min/avg/max | baseline qtext file min/avg/max |" \
         " patched qtext DSA min/avg/max | patched entry DSA min/avg/max | patched dealloc |" \
         " baseline dealloc |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 2; w++) {
     workload = workload_order[w]
     for (i = 1; i <= nwanted; i++) {
@@ -745,6 +754,12 @@ END {
             triplebytefmt(cell(patched, workload, clients, "qtext_len_min"),
                           cell(patched, workload, clients, "qtext_len_avg"),
                           cell(patched, workload, clients, "qtext_len_max")) " | " \
+            triplebytefmt(cell(patched, workload, clients, "qtext_file_min"),
+                          cell(patched, workload, clients, "qtext_file_avg"),
+                          cell(patched, workload, clients, "qtext_file_max")) " | " \
+            triplebytefmt(cell(baseline, workload, clients, "qtext_file_min"),
+                          cell(baseline, workload, clients, "qtext_file_avg"),
+                          cell(baseline, workload, clients, "qtext_file_max")) " | " \
             triplebytefmt(cell(patched, workload, clients, "qtext_dsa_min"),
                           cell(patched, workload, clients, "qtext_dsa_avg"),
                           cell(patched, workload, clients, "qtext_dsa_max")) " | " \
@@ -764,8 +779,9 @@ END {
   print ""
   print "| workload | clients | patched final entries | patched final qtext count |" \
         " patched final qtext payload | patched final qtext DSA |" \
+        " patched final qtext file | baseline final qtext file |" \
         " patched final entry DSA | patched final dealloc | baseline final dealloc |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 3; w++) {
     workload = workload_order[w]
     for (i = 1; i <= nwanted; i++) {
@@ -777,6 +793,8 @@ END {
             nfmt(cell(patched, workload, clients, "final_qtext_count")) " | " \
             bytefmt(cell(patched, workload, clients, "final_qtext_total_len")) " | " \
             bytefmt(cell(patched, workload, clients, "final_qtext_dsa_size")) " | " \
+            bytefmt(cell(patched, workload, clients, "final_qtext_file_size")) " | " \
+            bytefmt(cell(baseline, workload, clients, "final_qtext_file_size")) " | " \
             bytefmt(cell(patched, workload, clients, "final_entry_dsa_size")) " | " \
             nfmt(cell(patched, workload, clients, "final_entry_dealloc")) " | " \
             nfmt(cell(baseline, workload, clients, "final_entry_dealloc")) " |"
@@ -789,8 +807,8 @@ END {
   print "Average values from the periodic samples. Memory values use human-readable IEC units."
   print ""
   print "| workload | clients | avg entries | avg qtext count | avg qtext payload |" \
-        " avg qtext DSA | avg entry DSA |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"
+        " avg qtext file | avg qtext DSA | avg entry DSA |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 3; w++) {
     workload = workload_order[w]
     for (i = 1; i <= nwanted; i++) {
@@ -801,6 +819,7 @@ END {
             nfmt(cell(patched, workload, clients, "entries_avg")) " | " \
             nfmt(cell(patched, workload, clients, "qtext_avg")) " | " \
             bytefmt(cell(patched, workload, clients, "qtext_len_avg")) " | " \
+            bytefmt(cell(patched, workload, clients, "qtext_file_avg")) " | " \
             bytefmt(cell(patched, workload, clients, "qtext_dsa_avg")) " | " \
             bytefmt(cell(patched, workload, clients, "entry_dsa_avg")) " |"
     }

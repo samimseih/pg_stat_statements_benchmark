@@ -96,6 +96,16 @@ sql_at() {
   "${PSQL_AT[@]}" "$@"
 }
 
+qtext_file_size() {
+  local qtext_file="$PGDATA/pg_stat_tmp/pgss_query_texts.stat"
+
+  if [[ -f "$qtext_file" ]]; then
+    wc -c <"$qtext_file"
+  else
+    echo 0
+  fi
+}
+
 reset_pgss() {
   sql -q -c "select pg_stat_statements_reset();" >/dev/null
 }
@@ -289,6 +299,16 @@ start_samplers() {
     done
   ) >"$outdir/monitor_pgss.tsv" 2>"$outdir/monitor_pgss.err" &
   sampler_pids+=("$!")
+
+  (
+    printf "%s\t%s\n" sample_epoch qtext_file_size
+    sleep "$PGSS_SAMPLE_START_DELAY_SECONDS"
+    while true; do
+      printf "%s\t%s\n" "$(date +%s)" "$(qtext_file_size)"
+      sleep "$PGSS_SAMPLE_SECONDS"
+    done
+  ) >"$outdir/monitor_qtext_file.tsv" 2>"$outdir/monitor_qtext_file.err" &
+  sampler_pids+=("$!")
 }
 
 stop_samplers() {
@@ -456,13 +476,17 @@ extract_monitor_summary() {
 
 capture_final_info() {
   local outdir="$1"
+  local qtext_size
 
-  printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+  qtext_size="$(qtext_file_size)"
+
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     final_entry_dealloc final_entry_count final_entry_dsa_size \
     final_qtext_dsa_size final_qtext_count final_qtext_total_len \
+    final_qtext_file_size \
     >"$outdir/final_info.tsv"
 
-  sql_at -c "
+  "${PSQL_AT[@]}" -v qtext_file_size="$qtext_size" -c "
     with info as (
       select to_jsonb(i) as j
       from pg_stat_statements_info as i
@@ -474,15 +498,46 @@ capture_final_info() {
            coalesce((j->>'entry_dsa_size')::bigint, 0),
            coalesce((j->>'qtext_dsa_size')::bigint, 0),
            coalesce((j->>'qtext_count')::bigint, 0),
-           coalesce((j->>'qtext_total_len')::bigint, 0)
+           coalesce((j->>'qtext_total_len')::bigint, 0),
+           :'qtext_file_size'::bigint
     from info;" >>"$outdir/final_info.tsv" 2>"$outdir/final_info.err" || true
+}
+
+extract_qtext_file_summary() {
+  local file="$1"
+
+  if [[ ! -s "$file" ]]; then
+    printf "0\t0\t0\t0\n"
+    return
+  fi
+
+  awk -F $'\t' '
+    NR == 1 { next }
+    NF < 2 { next }
+    {
+      size = $2 + 0
+      if (!seen || size < min)
+        min = size
+      if (!seen || size > max)
+        max = size
+      sum += size
+      last = size
+      n++
+      seen = 1
+    }
+    END {
+      if (!seen)
+        print "0\t0\t0\t0"
+      else
+        printf "%d\t%d\t%.0f\t%d\n", min, max, sum / n, last
+    }' "$file"
 }
 
 extract_final_info_summary() {
   local file="$1"
 
   if [[ ! -s "$file" ]]; then
-    printf "0\t0\t0\t0\t0\t0\n"
+    printf "0\t0\t0\t0\t0\t0\t0\n"
     return
   fi
 
@@ -493,13 +548,14 @@ extract_final_info_summary() {
       next
     }
     NF > 0 {
-      printf "%d\t%d\t%d\t%d\t%d\t%d\n",
+      printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
              ("final_entry_dealloc" in col) ? $(col["final_entry_dealloc"]) : 0,
              ("final_entry_count" in col) ? $(col["final_entry_count"]) : 0,
              ("final_entry_dsa_size" in col) ? $(col["final_entry_dsa_size"]) : 0,
              ("final_qtext_dsa_size" in col) ? $(col["final_qtext_dsa_size"]) : 0,
              ("final_qtext_count" in col) ? $(col["final_qtext_count"]) : 0,
-             ("final_qtext_total_len" in col) ? $(col["final_qtext_total_len"]) : 0
+             ("final_qtext_total_len" in col) ? $(col["final_qtext_total_len"]) : 0,
+             ("final_qtext_file_size" in col) ? $(col["final_qtext_file_size"]) : 0
       found = 1
       exit
     }
@@ -523,8 +579,11 @@ append_summary() {
   local avg_qtext_count avg_qtext_total_len
   local min_entries min_pop min_unpop min_select min_empty_query min_other
   local avg_entry_dsa_size avg_qtext_dsa_size
+  local min_qtext_file_size max_qtext_file_size
+  local avg_qtext_file_size last_qtext_file_size
   local final_entry_dealloc final_entry_count final_entry_dsa_size
   local final_qtext_dsa_size final_qtext_count final_qtext_total_len
+  local final_qtext_file_size
 
   tps="$(extract_pgbench_field "$outdir/pgbench.log" tps)"
   latency="$(extract_pgbench_field "$outdir/pgbench.log" latency)"
@@ -542,9 +601,13 @@ append_summary() {
     avg_entry_dsa_size avg_qtext_dsa_size \
     < <(extract_monitor_summary "$outdir/monitor_pgss.tsv")
 
+  IFS=$'\t' read -r min_qtext_file_size max_qtext_file_size \
+    avg_qtext_file_size last_qtext_file_size \
+    < <(extract_qtext_file_summary "$outdir/monitor_qtext_file.tsv")
+
   IFS=$'\t' read -r final_entry_dealloc final_entry_count \
     final_entry_dsa_size final_qtext_dsa_size final_qtext_count \
-    final_qtext_total_len \
+    final_qtext_total_len final_qtext_file_size \
     < <(extract_final_info_summary "$outdir/final_info.tsv")
 
   values=(
@@ -556,6 +619,8 @@ append_summary() {
     "$min_qtext_dsa_size" "$max_qtext_dsa_size"
     "$min_qtext_count" "$max_qtext_count"
     "$min_qtext_total_len" "$max_qtext_total_len"
+    "$min_qtext_file_size" "$max_qtext_file_size"
+    "$avg_qtext_file_size" "$last_qtext_file_size"
     "$sample_count" "$avg_entries" "$avg_pop" "$avg_unpop"
     "$avg_select" "$avg_empty_query" "$avg_other" "$avg_qtext_count"
     "$avg_qtext_total_len"
@@ -564,6 +629,7 @@ append_summary() {
     "$avg_entry_dsa_size" "$avg_qtext_dsa_size"
     "$final_entry_dealloc" "$final_entry_count" "$final_entry_dsa_size"
     "$final_qtext_dsa_size" "$final_qtext_count" "$final_qtext_total_len"
+    "$final_qtext_file_size"
     "$outdir"
   )
 
@@ -748,13 +814,16 @@ main() {
     max_empty_query_entries max_other_entries max_entry_dealloc min_entry_dsa_size \
     max_entry_dsa_size min_qtext_dsa_size max_qtext_dsa_size \
     min_qtext_count max_qtext_count min_qtext_total_len \
-    max_qtext_total_len sample_count avg_entries avg_pop_entries \
+    max_qtext_total_len min_qtext_file_size max_qtext_file_size \
+    avg_qtext_file_size last_qtext_file_size \
+    sample_count avg_entries avg_pop_entries \
     avg_unpop_entries avg_select_entries avg_empty_query_entries avg_other_entries \
     avg_qtext_count avg_qtext_total_len min_entries min_pop_entries \
     min_unpop_entries min_select_entries min_empty_query_entries min_other_entries \
     avg_entry_dsa_size avg_qtext_dsa_size \
     final_entry_dealloc final_entry_count final_entry_dsa_size \
-    final_qtext_dsa_size final_qtext_count final_qtext_total_len outdir \
+    final_qtext_dsa_size final_qtext_count final_qtext_total_len \
+    final_qtext_file_size outdir \
   )
   printf "%s" "${header[0]}" >"$summary"
   for ((i = 1; i < ${#header[@]}; i++)); do
