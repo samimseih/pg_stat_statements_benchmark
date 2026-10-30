@@ -97,7 +97,7 @@ For each timed run the script records:
 
 The retention scan waits briefly after each run starts, then samples every 5
 seconds by default.  It groups statements into `pop`, `unpop`, `select_only`,
-`other`, and `null_query` buckets.  It also records
+`other`, `null_query`, and `empty_query` buckets.  It also records
 `pg_stat_statements_info` counters when the tested commit exposes them.  The
 summary reports sampled min/avg/max values for entries, retention buckets,
 entry DSA, and query-text storage.  This keeps the run honest about whether the
@@ -216,17 +216,17 @@ It also includes retention, churn, and storage columns:
 
 ```text
 max_entries  max_pop_entries  max_unpop_entries  max_select_entries
-max_other_entries  max_entry_dealloc
+max_empty_query_entries  max_other_entries  max_entry_dealloc
 min_entry_dsa_size  max_entry_dsa_size
 min_qtext_dsa_size  max_qtext_dsa_size
 min_qtext_count  max_qtext_count
 min_qtext_total_len  max_qtext_total_len
 sample_count
 avg_entries  avg_pop_entries  avg_unpop_entries
-avg_select_entries  avg_other_entries
+avg_select_entries  avg_empty_query_entries  avg_other_entries
 avg_qtext_count  avg_qtext_total_len
 min_entries  min_pop_entries  min_unpop_entries
-min_select_entries  min_other_entries
+min_select_entries  min_empty_query_entries  min_other_entries
 avg_entry_dsa_size  avg_qtext_dsa_size
 final_entry_dealloc  final_entry_count  final_entry_dsa_size
 final_qtext_dsa_size  final_qtext_count  final_qtext_total_len
