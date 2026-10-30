@@ -191,6 +191,7 @@ start_samplers() {
         statements as (
           select case
                    when query is null then 'null_query'
+                   when query = '' then 'empty_query'
                    when query like 'WITH CTEPOP_%' then 'pop'
                    when query like 'WITH CTEUNPOP_%' then 'unpop'
                    when lower(query) like 'select abalance from pgbench_accounts%' then 'select_only'
@@ -254,13 +255,24 @@ extract_pgbench_field() {
 
 extract_monitor_summary() {
   local file="$1"
+  local i
 
   if [[ ! -s "$file" ]]; then
-    printf "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n"
+    printf "0"
+    for ((i = 1; i < 32; i++)); do
+      printf "\t0"
+    done
+    printf "\n"
     return
   fi
 
   awk -F $'\t' '
+    function zero_summary(i) {
+      printf "0"
+      for (i = 1; i < 32; i++)
+        printf "\t0"
+      printf "\n"
+    }
     NR == 1 { next }
     NF < 12 { next }
     {
@@ -279,6 +291,8 @@ extract_monitor_summary() {
         max_unpop = entries
       if (bucket == "select_only" && entries > max_select)
         max_select = entries
+      if (bucket == "empty_query" && entries > max_empty_query)
+        max_empty_query = entries
       if (bucket == "other" && entries > max_other)
         max_other = entries
       if (($8 + 0) > max_entry_dealloc)
@@ -319,6 +333,7 @@ extract_monitor_summary() {
         pop = bucket_entries[sample, "pop"] + 0
         unpop = bucket_entries[sample, "unpop"] + 0
         select_only = bucket_entries[sample, "select_only"] + 0
+        empty_query = bucket_entries[sample, "empty_query"] + 0
         other = bucket_entries[sample, "other"] + 0
 
         nsamples++
@@ -326,6 +341,7 @@ extract_monitor_summary() {
         sum_pop += pop
         sum_unpop += unpop
         sum_select += select_only
+        sum_empty_query += empty_query
         sum_other += other
         sum_entry_dsa_size += sample_entry_dsa_size[sample]
         sum_qtext_dsa_size += sample_qtext_dsa_size[sample]
@@ -340,6 +356,8 @@ extract_monitor_summary() {
           min_unpop = unpop
         if (!seen_sample || select_only < min_select)
           min_select = select_only
+        if (!seen_sample || empty_query < min_empty_query)
+          min_empty_query = empty_query
         if (!seen_sample || other < min_other)
           min_other = other
 
@@ -347,24 +365,26 @@ extract_monitor_summary() {
       }
 
       if (nsamples == 0) {
-        print "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0"
+        zero_summary()
         exit
       }
 
-      printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
-             max_entries, max_pop, max_unpop, max_select, max_other,
-             max_entry_dealloc, min_entry_dsa_size, max_entry_dsa_size,
-             min_qtext_dsa_size, max_qtext_dsa_size, min_qtext_count,
-             max_qtext_count, min_qtext_total_len
+      printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+             max_entries, max_pop, max_unpop, max_select, max_empty_query,
+             max_other, max_entry_dealloc, min_entry_dsa_size,
+             max_entry_dsa_size, min_qtext_dsa_size, max_qtext_dsa_size,
+             min_qtext_count, max_qtext_count, min_qtext_total_len
       printf "\t%d", max_qtext_total_len
-      printf "\t%d\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f",
+      printf "\t%d\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f",
              nsamples, sum_entries / nsamples, sum_pop / nsamples,
              sum_unpop / nsamples, sum_select / nsamples,
-             sum_other / nsamples, sum_qtext_count / nsamples,
+             sum_empty_query / nsamples, sum_other / nsamples,
+             sum_qtext_count / nsamples,
              sum_qtext_total_len / nsamples
-      printf "\t%d\t%d\t%d\t%d\t%d\t%.0f\t%.0f\n",
-             min_entries, min_pop, min_unpop, min_select, min_other,
-             sum_entry_dsa_size / nsamples, sum_qtext_dsa_size / nsamples
+      printf "\t%d\t%d\t%d\t%d\t%d\t%d\t%.0f\t%.0f\n",
+             min_entries, min_pop, min_unpop, min_select, min_empty_query,
+             min_other, sum_entry_dsa_size / nsamples,
+             sum_qtext_dsa_size / nsamples
     }' "$file"
 }
 
@@ -428,13 +448,14 @@ append_summary() {
   local tps latency failed
   local -a values
   local i
-  local max_entries max_pop max_unpop max_select max_other
+  local max_entries max_pop max_unpop max_select max_empty_query max_other
   local max_entry_dealloc min_entry_dsa_size max_entry_dsa_size
   local min_qtext_dsa_size max_qtext_dsa_size min_qtext_count
   local max_qtext_count min_qtext_total_len max_qtext_total_len
-  local sample_count avg_entries avg_pop avg_unpop avg_select avg_other
+  local sample_count avg_entries avg_pop avg_unpop avg_select
+  local avg_empty_query avg_other
   local avg_qtext_count avg_qtext_total_len
-  local min_entries min_pop min_unpop min_select min_other
+  local min_entries min_pop min_unpop min_select min_empty_query min_other
   local avg_entry_dsa_size avg_qtext_dsa_size
   local final_entry_dealloc final_entry_count final_entry_dsa_size
   local final_qtext_dsa_size final_qtext_count final_qtext_total_len
@@ -443,13 +464,15 @@ append_summary() {
   latency="$(extract_pgbench_field "$outdir/pgbench.log" latency)"
   failed="$(extract_pgbench_field "$outdir/pgbench.log" failed)"
 
-  IFS=$'\t' read -r max_entries max_pop max_unpop max_select max_other \
+  IFS=$'\t' read -r max_entries max_pop max_unpop max_select \
+    max_empty_query max_other \
     max_entry_dealloc min_entry_dsa_size max_entry_dsa_size \
     min_qtext_dsa_size max_qtext_dsa_size min_qtext_count \
     max_qtext_count min_qtext_total_len max_qtext_total_len \
-    sample_count avg_entries avg_pop avg_unpop avg_select avg_other \
+    sample_count avg_entries avg_pop avg_unpop avg_select \
+    avg_empty_query avg_other \
     avg_qtext_count avg_qtext_total_len \
-    min_entries min_pop min_unpop min_select min_other \
+    min_entries min_pop min_unpop min_select min_empty_query min_other \
     avg_entry_dsa_size avg_qtext_dsa_size \
     < <(extract_monitor_summary "$outdir/monitor_pgss.tsv")
 
@@ -461,14 +484,17 @@ append_summary() {
   values=(
     "$commit" "$workload" "$clients" "$threads" "$duration" "$status"
     "${tps:-}" "${latency:-}" "${failed:-}"
-    "$max_entries" "$max_pop" "$max_unpop" "$max_select" "$max_other"
+    "$max_entries" "$max_pop" "$max_unpop" "$max_select"
+    "$max_empty_query" "$max_other"
     "$max_entry_dealloc" "$min_entry_dsa_size" "$max_entry_dsa_size"
     "$min_qtext_dsa_size" "$max_qtext_dsa_size"
     "$min_qtext_count" "$max_qtext_count"
     "$min_qtext_total_len" "$max_qtext_total_len"
     "$sample_count" "$avg_entries" "$avg_pop" "$avg_unpop"
-    "$avg_select" "$avg_other" "$avg_qtext_count" "$avg_qtext_total_len"
-    "$min_entries" "$min_pop" "$min_unpop" "$min_select" "$min_other"
+    "$avg_select" "$avg_empty_query" "$avg_other" "$avg_qtext_count"
+    "$avg_qtext_total_len"
+    "$min_entries" "$min_pop" "$min_unpop" "$min_select"
+    "$min_empty_query" "$min_other"
     "$avg_entry_dsa_size" "$avg_qtext_dsa_size"
     "$final_entry_dealloc" "$final_entry_count" "$final_entry_dsa_size"
     "$final_qtext_dsa_size" "$final_qtext_count" "$final_qtext_total_len"
@@ -563,13 +589,13 @@ main() {
   header=(
     commit workload clients threads duration_s status tps latency_avg_ms \
     failed max_entries max_pop_entries max_unpop_entries max_select_entries \
-    max_other_entries max_entry_dealloc min_entry_dsa_size \
+    max_empty_query_entries max_other_entries max_entry_dealloc min_entry_dsa_size \
     max_entry_dsa_size min_qtext_dsa_size max_qtext_dsa_size \
     min_qtext_count max_qtext_count min_qtext_total_len \
     max_qtext_total_len sample_count avg_entries avg_pop_entries \
-    avg_unpop_entries avg_select_entries avg_other_entries \
+    avg_unpop_entries avg_select_entries avg_empty_query_entries avg_other_entries \
     avg_qtext_count avg_qtext_total_len min_entries min_pop_entries \
-    min_unpop_entries min_select_entries min_other_entries \
+    min_unpop_entries min_select_entries min_empty_query_entries min_other_entries \
     avg_entry_dsa_size avg_qtext_dsa_size \
     final_entry_dealloc final_entry_count final_entry_dsa_size \
     final_qtext_dsa_size final_qtext_count final_qtext_total_len outdir \

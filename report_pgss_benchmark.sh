@@ -484,6 +484,12 @@ FNR == NR {
   data[key SUBSEP "unpop_avg"] = \
     ("avg_unpop_entries" in col) ? fieldnum("avg_unpop_entries") : data[key SUBSEP "unpop"]
   data[key SUBSEP "select"] = $col["max_select_entries"] + 0
+  data[key SUBSEP "empty_query"] = \
+    ("max_empty_query_entries" in col) ? fieldnum("max_empty_query_entries") : 0
+  data[key SUBSEP "empty_query_min"] = \
+    ("min_empty_query_entries" in col) ? fieldnum("min_empty_query_entries") : 0
+  data[key SUBSEP "empty_query_avg"] = \
+    ("avg_empty_query_entries" in col) ? fieldnum("avg_empty_query_entries") : 0
   data[key SUBSEP "other"] = $col["max_other_entries"] + 0
   data[key SUBSEP "dealloc"] = $col["max_entry_dealloc"] + 0
   data[key SUBSEP "qtext"] = $col["max_qtext_count"] + 0
@@ -562,6 +568,23 @@ END {
     }
   }
 
+  for (w = 1; w <= 3; w++) {
+    workload = workload_order[w]
+    for (i = 1; i <= nwanted; i++) {
+      clients = wanted_clients[i]
+      if (!have_pair(workload, clients))
+        continue
+      patched_empty_query = \
+        cell(patched, workload, clients, "empty_query")
+      baseline_empty_query = \
+        cell(baseline, workload, clients, "empty_query")
+      if (patched_empty_query > max_patched_empty_query)
+        max_patched_empty_query = patched_empty_query
+      if (baseline_empty_query > max_baseline_empty_query)
+        max_baseline_empty_query = baseline_empty_query
+    }
+  }
+
   baseline_churn_pgss = \
     waitcell(baseline, "hotcold_100m", "pgss") + \
     waitcell(baseline, "hotcold_1500", "pgss")
@@ -612,6 +635,9 @@ END {
   if (qtext_line != "")
     print "- Patched qtext_count high-water from samples/final info was " \
           qtext_line "."
+  print "- Empty-query sampled high-water was " \
+        nfmt(max_patched_empty_query) " for patched and " \
+        nfmt(max_baseline_empty_query) " for baseline."
   if (max_entry_dsa > 0)
     print "- Patched entry DSA high-water from samples/final info was " \
           bytefmt(max_entry_dsa) "."
@@ -692,13 +718,14 @@ END {
 
   print "## Sampled Query Text And Churn"
   print ""
-  print "Query-text and memory values from periodic samples are min/avg/max."
+  print "Query-text, empty-query, and memory values from periodic samples are min/avg/max."
   print "Memory values use human-readable IEC units."
   print ""
-  print "| workload | clients | patched qtext count | patched qtext payload min/avg/max |" \
+  print "| workload | clients | patched empty query entries | baseline empty query entries |" \
+        " patched qtext count | patched qtext payload min/avg/max |" \
         " patched qtext DSA min/avg/max | patched entry DSA min/avg/max | patched dealloc |" \
         " baseline dealloc |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 2; w++) {
     workload = workload_order[w]
     for (i = 1; i <= nwanted; i++) {
@@ -706,6 +733,12 @@ END {
       if (!have_pair(workload, clients))
         continue
       print "| " workload " | " clients " | " \
+            triplefmt(cell(patched, workload, clients, "empty_query_min"),
+                      cell(patched, workload, clients, "empty_query_avg"),
+                      cell(patched, workload, clients, "empty_query")) " | " \
+            triplefmt(cell(baseline, workload, clients, "empty_query_min"),
+                      cell(baseline, workload, clients, "empty_query_avg"),
+                      cell(baseline, workload, clients, "empty_query")) " | " \
             triplefmt(cell(patched, workload, clients, "qtext_min"),
                       cell(patched, workload, clients, "qtext_avg"),
                       cell(patched, workload, clients, "qtext")) " | " \
@@ -809,6 +842,8 @@ END {
   print "- Query-text and entry DSA columns are sampled current-state gauges;"
   print "  summary.tsv reports their sampled min/avg/max. Older commits that do"
   print "  not expose them report zero in summary.tsv."
+  print "- Empty-query entries are sampled as empty-string query text,"
+  print "  separately from null query text."
   print "- The Markdown report prints memory with IEC units; summary.tsv keeps"
   print "  raw byte counts for scripts."
   print "- Final gauges come from pg_stat_statements_info after each pgbench run;"

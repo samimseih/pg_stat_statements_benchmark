@@ -20,7 +20,8 @@ from pg_stat_statements_info;
 \echo pg_stat_statements summary
 select count(*) as entries,
        coalesce(sum(calls), 0) as calls,
-       count(*) filter (where query is null) as null_query_entries
+       count(*) filter (where query is null) as null_query_entries,
+       count(*) filter (where query = '') as empty_query_entries
 from pg_stat_statements;
 
 \echo pg_stat_statements retention buckets
@@ -33,6 +34,7 @@ select bucket,
 from (
     select case
              when query is null then 'null_query'
+             when query = '' then 'empty_query'
              when query like 'WITH CTEPOP_%' then 'pop'
              when query like 'WITH CTEUNPOP_%' then 'unpop'
              when lower(query) like 'select abalance from pgbench_accounts%' then 'select_only'
