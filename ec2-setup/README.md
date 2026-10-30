@@ -49,8 +49,13 @@ Useful overrides:
 INSTANCE_TYPE=c7i.8xlarge ./launch_benchmark_instance.sh
 HOTCOLD_SECONDS=300 SELECT_SECONDS=300 ./launch_benchmark_instance.sh
 RUN_HOTCOLD_1500=0 ./launch_benchmark_instance.sh
+RUN_ORDER=interleaved ./launch_benchmark_instance.sh
 AUTO_TERMINATE=0 ./launch_benchmark_instance.sh
 ```
+
+`RUN_ORDER=interleaved` builds each tested commit once into its own install
+prefix, then alternates patch/baseline per client point with a fresh `initdb`
+for each point.
 
 The launch script creates, or reuses, these account resources:
 

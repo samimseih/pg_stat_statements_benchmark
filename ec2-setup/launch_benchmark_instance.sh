@@ -188,6 +188,7 @@ render_user_data() {
     write_env_var RUN_HOTCOLD_100M "$RUN_HOTCOLD_100M"
     write_env_var RUN_HOTCOLD_1500 "$RUN_HOTCOLD_1500"
     write_env_var RUN_SELECT_ONLY "$RUN_SELECT_ONLY"
+    write_env_var RUN_ORDER "$RUN_ORDER"
     write_env_var PGSS_SAMPLE_SECONDS "$PGSS_SAMPLE_SECONDS"
     write_env_var PGSS_SAMPLE_START_DELAY_SECONDS "$PGSS_SAMPLE_START_DELAY_SECONDS"
     write_env_var PROGRESS_SECONDS "$PROGRESS_SECONDS"

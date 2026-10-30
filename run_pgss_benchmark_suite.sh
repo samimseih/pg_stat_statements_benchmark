@@ -23,6 +23,7 @@ PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
 RUN_HOTCOLD_100M="${RUN_HOTCOLD_100M:-1}"
 RUN_HOTCOLD_1500="${RUN_HOTCOLD_1500:-1}"
 RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
+RUN_ORDER="${RUN_ORDER:-commit_major}"
 
 HOTCOLD_SECONDS="${HOTCOLD_SECONDS:-60}"
 SELECT_SECONDS="${SELECT_SECONDS:-120}"
@@ -36,19 +37,35 @@ MAX_CONNECTIONS="${MAX_CONNECTIONS:-300}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RESULT_ROOT="${RESULT_ROOT:-$SCRIPT_DIR/results/$RUN_ID}"
 
-PGHOME="$PREFIX/pghome/$WORKTREE_NAME"
-PGDATA="$PREFIX/pgdata/$WORKTREE_NAME"
-
-PSQL=("$PGHOME/bin/psql" -X -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE")
-PSQL_AT=("$PGHOME/bin/psql" -XAt -F $'\t' -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE")
-PGBENCH="$PGHOME/bin/pgbench"
+PGHOME_BASE="$PREFIX/pghome"
+PGDATA_BASE="$PREFIX/pgdata"
+PGHOME=""
+PGDATA=""
+PGBENCH=""
 
 summary="$RESULT_ROOT/summary.tsv"
 original_ref=""
 
+declare -a PSQL
+declare -a PSQL_AT
+declare -A COMMIT_INSTALL_NAME
+declare -A COMMIT_SHORT_NAME
+
 die() {
   echo "error: $*" >&2
   exit 1
+}
+
+set_pg_paths() {
+  local install_name="$1"
+  local data_name="${2:-$WORKTREE_NAME}"
+
+  PGHOME="$PGHOME_BASE/$install_name"
+  PGDATA="$PGDATA_BASE/$data_name"
+
+  PSQL=("$PGHOME/bin/psql" -X -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE")
+  PSQL_AT=("$PGHOME/bin/psql" -XAt -F $'\t' -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE")
+  PGBENCH="$PGHOME/bin/pgbench"
 }
 
 threads_for_clients() {
@@ -116,6 +133,10 @@ verify_release_build() {
   ' || die "$BUILD_DIR is not configured as a release/perf build"
 }
 
+configure_build_prefix() {
+  meson configure "$BUILD_DIR" --prefix="$PGHOME" >/dev/null
+}
+
 recreate_cluster() {
   "$PGHOME/bin/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
   rm -rf -- "$PGDATA"
@@ -123,17 +144,62 @@ recreate_cluster() {
   "$PGHOME/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/logfile" -w start
 }
 
+capture_commit_settings() {
+  local short_commit="$1"
+
+  sql -c "select name, setting from pg_settings where name in ('shared_preload_libraries', 'pg_stat_statements.max', 'pg_stat_statements.query_text_memory', 'max_connections') order by 1;" \
+    >"$RESULT_ROOT/$short_commit/settings.out"
+}
+
 build_and_start_commit() {
   local commit="$1"
 
+  set_pg_paths "$WORKTREE_NAME"
   echo
   echo "==> Building $commit"
   git -C "$PG_WORKTREE" checkout -q "$commit"
+  configure_build_prefix
   verify_release_build
   ninja -C "$BUILD_DIR" clean
   ninja -C "$BUILD_DIR" install
   recreate_cluster
   configure_cluster
+}
+
+prepare_commit_install() {
+  local commit="$1"
+  local short_commit install_name
+
+  echo
+  echo "==> Building $commit"
+  git -C "$PG_WORKTREE" checkout -q "$commit"
+  short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
+  install_name="$WORKTREE_NAME-$short_commit"
+
+  COMMIT_SHORT_NAME["$commit"]="$short_commit"
+  COMMIT_INSTALL_NAME["$commit"]="$install_name"
+
+  mkdir -p "$RESULT_ROOT/$short_commit"
+  git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
+
+  set_pg_paths "$install_name"
+  configure_build_prefix
+  verify_release_build
+  ninja -C "$BUILD_DIR" clean
+  ninja -C "$BUILD_DIR" install
+}
+
+start_prepared_commit() {
+  local commit="$1"
+  local short_commit="${COMMIT_SHORT_NAME[$commit]}"
+  local install_name="${COMMIT_INSTALL_NAME[$commit]}"
+
+  [[ -n "$short_commit" && -n "$install_name" ]] || die "commit $commit has not been prepared"
+
+  set_pg_paths "$install_name"
+  recreate_cluster
+  configure_cluster
+  capture_commit_settings "$short_commit"
 }
 
 start_samplers() {
@@ -556,6 +622,22 @@ run_hotcold_ladder() {
   done
 }
 
+run_interleaved_hotcold_ladder() {
+  local workload="$1" script="$2"
+  local clients commit short_commit
+
+  for clients in "${CLIENTS[@]}"; do
+    for commit in "${COMMITS[@]}"; do
+      short_commit="${COMMIT_SHORT_NAME[$commit]}"
+      start_prepared_commit "$commit"
+      echo "==> $short_commit $workload clients=$clients"
+      run_pgbench_capture "$short_commit" "$workload" "$clients" "$HOTCOLD_SECONDS" \
+        "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
+        -P "$PROGRESS_SECONDS" -f "$script"
+    done
+  done
+}
+
 run_select_only_ladder() {
   local commit="$1"
   local clients
@@ -577,13 +659,87 @@ run_select_only_ladder() {
   done
 }
 
+run_interleaved_select_only_ladder() {
+  local clients commit short_commit
+
+  for clients in "${SELECT_CLIENTS[@]}"; do
+    for commit in "${COMMITS[@]}"; do
+      short_commit="${COMMIT_SHORT_NAME[$commit]}"
+      start_prepared_commit "$commit"
+
+      echo "==> $short_commit select_only init scale=$SELECT_SCALE"
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -i -s "$SELECT_SCALE" "$PGDATABASE" \
+        >"$RESULT_ROOT/$short_commit/select_init_c$clients.log" 2>&1
+
+      echo "==> $short_commit select_only warmup ${SELECT_WARMUP_SECONDS}s"
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
+        -c 32 -j 32 -T "$SELECT_WARMUP_SECONDS" -S "$PGDATABASE" \
+        >"$RESULT_ROOT/$short_commit/select_warmup_c$clients.log" 2>&1
+
+      echo "==> $short_commit select_only clients=$clients"
+      run_pgbench_capture "$short_commit" select_only "$clients" "$SELECT_SECONDS" \
+        "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
+        -P "$PROGRESS_SECONDS" -S
+    done
+  done
+}
+
+run_interleaved() {
+  local commit
+
+  for commit in "${COMMITS[@]}"; do
+    prepare_commit_install "$commit"
+  done
+
+  if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
+    run_interleaved_hotcold_ladder hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+  fi
+  if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
+    run_interleaved_hotcold_ladder hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+  fi
+  if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
+    run_interleaved_select_only_ladder
+  fi
+}
+
+run_commit_major() {
+  local commit short_commit
+
+  for commit in "${COMMITS[@]}"; do
+    build_and_start_commit "$commit"
+    short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
+    mkdir -p "$RESULT_ROOT/$short_commit"
+    git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
+    capture_commit_settings "$short_commit"
+
+    if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+    fi
+    if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+    fi
+    if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
+      run_select_only_ladder "$short_commit"
+    fi
+  done
+}
+
 main() {
   local -a header
   local i
 
+  case "$RUN_ORDER" in
+    commit_major|interleaved)
+      ;;
+    *)
+      die "unsupported RUN_ORDER: $RUN_ORDER"
+      ;;
+  esac
+
   check_worktree_clean
   original_ref="$(git -C "$PG_WORKTREE" symbolic-ref --short -q HEAD || git -C "$PG_WORKTREE" rev-parse HEAD)"
   trap checkout_original_on_exit EXIT
+  set_pg_paths "$WORKTREE_NAME"
 
   mkdir -p "$RESULT_ROOT"
   header=(
@@ -606,24 +762,11 @@ main() {
   done
   printf "\n" >>"$summary"
 
-  for commit in "${COMMITS[@]}"; do
-    build_and_start_commit "$commit"
-    short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
-    mkdir -p "$RESULT_ROOT/$short_commit"
-    git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
-    sql -c "select name, setting from pg_settings where name in ('shared_preload_libraries', 'pg_stat_statements.max', 'pg_stat_statements.query_text_memory', 'max_connections') order by 1;" \
-      >"$RESULT_ROOT/$short_commit/settings.out"
-
-    if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
-      run_hotcold_ladder "$short_commit" hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
-    fi
-    if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
-      run_hotcold_ladder "$short_commit" hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
-    fi
-    if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
-      run_select_only_ladder "$short_commit"
-    fi
-  done
+  if [[ "$RUN_ORDER" == "interleaved" ]]; then
+    run_interleaved
+  else
+    run_commit_major
+  fi
 
   echo
   echo "Results: $RESULT_ROOT"

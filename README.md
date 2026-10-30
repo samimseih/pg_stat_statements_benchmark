@@ -140,10 +140,16 @@ CLIENTS="32 64 128 256" ./run_pgss_benchmark_suite.sh
 SELECT_CLIENTS="1 2 4 8 16 32 64 128 256" ./run_pgss_benchmark_suite.sh
 HOTCOLD_SECONDS=300 SELECT_SECONDS=300 ./run_pgss_benchmark_suite.sh
 RUN_HOTCOLD_1500=0 ./run_pgss_benchmark_suite.sh
+RUN_ORDER=interleaved ./run_pgss_benchmark_suite.sh
 PGSS_SAMPLE_SECONDS=5 ./run_pgss_benchmark_suite.sh
 PGSS_QUERY_TEXT_MEMORY=1GB ./run_pgss_benchmark_suite.sh
 RESULT_ROOT=/tmp/pgss_results ./run_pgss_benchmark_suite.sh
 ```
+
+By default, `RUN_ORDER=commit_major` builds one commit and runs all selected
+points for it before moving to the next commit.  `RUN_ORDER=interleaved` builds
+each commit once into a commit-specific install prefix, then alternates commits
+per client point with a fresh `initdb` for each point.
 
 Defaults assume this local layout:
 
