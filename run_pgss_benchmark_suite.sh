@@ -486,7 +486,7 @@ capture_final_info() {
     final_qtext_file_size \
     >"$outdir/final_info.tsv"
 
-  "${PSQL_AT[@]}" -v qtext_file_size="$qtext_size" -c "
+  "${PSQL_AT[@]}" -c "
     with info as (
       select to_jsonb(i) as j
       from pg_stat_statements_info as i
@@ -499,7 +499,7 @@ capture_final_info() {
            coalesce((j->>'qtext_dsa_size')::bigint, 0),
            coalesce((j->>'qtext_count')::bigint, 0),
            coalesce((j->>'qtext_total_len')::bigint, 0),
-           :'qtext_file_size'::bigint
+           $qtext_size::bigint
     from info;" >>"$outdir/final_info.tsv" 2>"$outdir/final_info.err" || true
 }
 
