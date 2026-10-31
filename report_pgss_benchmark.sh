@@ -680,6 +680,15 @@ END {
   print "| failed pgbench rows | " failed + 0 " |"
   print ""
 
+  print "## Workload And Retention Legend"
+  print ""
+  print "| name | meaning |"
+  print "| --- | --- |"
+  print "| `hotcold_100m` | 4,000 stable hot/popular statements plus a large cold/churn keyspace. |"
+  print "| `hotcold_1500` | 4,000 stable hot/popular statements plus 1,500 cold/churn statements. |"
+  print "| `pop/unpop` | sampled retained hot/popular entries and cold/churn entries. |"
+  print ""
+
   print "## Throughput"
   print ""
   print_throughput("hotcold_100m")

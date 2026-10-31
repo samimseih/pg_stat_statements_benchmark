@@ -46,11 +46,14 @@ tarball="$dest/$run_id.results.tar.gz"
 extract_root="$dest/extracted"
 result_dir="$extract_root/$run_id"
 report="$dest/report.md"
+html_report="$dest/report.html"
 benchmark_repo="${BENCHMARK_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 report_script="$benchmark_repo/report_pgss_benchmark.sh"
+html_renderer="$benchmark_repo/render_report_html.py"
 
 [[ -f "$tarball" ]] || die "missing result tarball: $tarball"
 [[ -x "$report_script" ]] || die "missing executable report script: $report_script"
+[[ -x "$html_renderer" ]] || die "missing executable HTML renderer: $html_renderer"
 
 mkdir -p "$extract_root"
 if [[ ! -f "$result_dir/summary.tsv" ]]; then
@@ -60,6 +63,7 @@ fi
 [[ -f "$result_dir/summary.tsv" ]] || die "missing summary after extraction: $result_dir/summary.tsv"
 
 "$report_script" "$result_dir" > "$report"
+"$html_renderer" "$report" "$html_report"
 
 failed_rows="$(
   awk -F $'\t' '
@@ -81,11 +85,13 @@ cat <<EOF
 Analyzed $run_id
 
 Report:  $report
+HTML:    $html_report
 Summary: $result_dir/summary.tsv
 Rows:    $row_count
 Failed:  $failed_rows
 
 Open:
   less "$report"
+  python3 -m webbrowser "$html_report"
   column -t -s \$'\\t' "$result_dir/summary.tsv" | less -S
 EOF

@@ -70,14 +70,17 @@ Protocol:
 Workloads:
 
 - `hotcold_100m`: 90% of executions choose from 4000 popular query texts,
-  10% choose from 100000000 unpopular IDs. Duration: 60 seconds.
+  10% choose from a large cold/churn keyspace of 100000000 unpopular IDs.
+  Duration: 60 seconds.
 - `hotcold_1500`: 90% choose from 4000 popular query texts, 10% choose from
-  1500 unpopular IDs. Duration: 60 seconds.
+  a bounded cold/churn keyspace of 1500 unpopular IDs. Duration: 60 seconds.
 - `select_only`: pgbench `-S` after `pgbench -i -s 10`. Duration: 120
   seconds.
 
 The hot/cold workloads use query names like `CTEPOP_123` and `CTEUNPOP_456`
-so the analyzer can report retention for popular and unpopular entries.
+so the analyzer can report retention for popular and unpopular entries.  In
+reports, `pop/unpop` means sampled retained hot/popular entries and retained
+cold/churn entries.
 
 The default durations can be changed with `HOTCOLD_SECONDS` and
 `SELECT_SECONDS`.  Individual workload groups can be disabled with
@@ -256,16 +259,20 @@ Generate a Markdown report from a completed result directory:
 ```
 
 If no result directory is passed, the newest `results/<timestamp>` directory is
-used.  The report starts with a short summary, then prints run metadata,
-per-workload throughput tables, retention tables, query-text/churn counters,
-memory gauges, and wait-event summaries.  Retention and memory columns that
-show three values use `min/avg/max` from the periodic samples.  The Markdown
-report prints memory in human-readable units; `summary.tsv` keeps raw byte
-counts for scripts.  The report labels the first commit in `summary.tsv` as
-`patched` and the second as `baseline`.  `PATCHED_LABEL`, `BASELINE_LABEL`,
-`PATCHED_URL`, and `BASELINE_URL` can be set when generating a published
-report.  Reports include a final-gauges table from `pg_stat_statements_info`;
-that table is preferred for end-of-run memory and entry counts because it does
-not scan the full `pg_stat_statements` view.  The wait-event `cpu/no wait`
-column is active backends with no PostgreSQL wait event reported; it is not
-sampled from OS CPU counters.
+used.  The report starts with a short summary, then prints run metadata, a
+workload/retention legend, per-workload throughput tables, retention tables,
+query-text/churn counters, memory gauges, and wait-event summaries.  Retention
+and memory columns that show three values use `min/avg/max` from the periodic
+samples.  The Markdown report prints memory in human-readable units;
+`summary.tsv` keeps raw byte counts for scripts.  The report labels the first
+commit in `summary.tsv` as `patched` and the second as `baseline`.
+`PATCHED_LABEL`, `BASELINE_LABEL`, `PATCHED_URL`, and `BASELINE_URL` can be set
+when generating a published report.  Reports include a final-gauges table from
+`pg_stat_statements_info`; that table is preferred for end-of-run memory and
+entry counts because it does not scan the full `pg_stat_statements` view.  The
+wait-event `cpu/no wait` column is active backends with no PostgreSQL wait
+event reported; it is not sampled from OS CPU counters.
+
+`ec2-setup/analyze_results.sh` writes both `report.md` and `report.html` for
+the fetched run.  The HTML report is standalone and convenient for temporary
+S3/presigned-URL viewing.
