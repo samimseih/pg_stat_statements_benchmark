@@ -69,10 +69,10 @@ Protocol:
 
 Workloads:
 
-- `hotcold_100m`: 90% of executions choose from 4000 popular query texts,
+- `hotcold_4000_100m`: 90% of executions choose from 4000 popular query texts,
   10% choose from a large cold/churn keyspace of 100000000 unpopular IDs.
   Duration: 60 seconds.
-- `hotcold_1500`: 90% choose from 4000 popular query texts, 10% choose from
+- `hotcold_4000_1500`: 90% choose from 4000 popular query texts, 10% choose from
   a bounded cold/churn keyspace of 1500 unpopular IDs. Duration: 60 seconds.
 - `select_only`: pgbench `-S` after `pgbench -i -s 10`. Duration: 120
   seconds.

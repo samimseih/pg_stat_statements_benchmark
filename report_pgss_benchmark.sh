@@ -369,6 +369,14 @@ function have_workload(workload, i) {
   return 0
 }
 
+function canonical_workload(workload) {
+  if (workload == "hotcold_100m")
+    return "hotcold_4000_100m"
+  if (workload == "hotcold_1500")
+    return "hotcold_4000_1500"
+  return workload
+}
+
 function waitcell(commit, workload, field) {
   return waits[commit SUBSEP workload SUBSEP field] + 0
 }
@@ -444,7 +452,7 @@ function print_wait_delta_table(workload) {
 
 BEGIN {
   nwanted = split(report_clients, wanted_clients, " ")
-  split("hotcold_100m hotcold_1500 select_only", workload_order, " ")
+  split("hotcold_4000_100m hotcold_4000_1500 select_only", workload_order, " ")
   patched = patched_hint
   baseline = baseline_hint
 }
@@ -457,7 +465,7 @@ FNR == NR && NR == 1 {
 
 FNR == NR {
   commit = $col["commit"]
-  workload = $col["workload"]
+  workload = canonical_workload($col["workload"])
   clients = $col["clients"]
 
   if (!(commit in commit_seen)) {
@@ -536,7 +544,7 @@ FNR == NR {
 
 {
   commit = $1
-  workload = $2
+  workload = canonical_workload($2)
   key = commit SUBSEP workload
   waits[key SUBSEP "total"] += $3
   waits[key SUBSEP "pgss"] += $4
@@ -552,8 +560,12 @@ END {
   if (result_label == "")
     result_label = result_dir
 
-  high100 = pctrange("hotcold_100m")
-  high1500 = pctrange("hotcold_1500")
+  hot100 = "hotcold_4000_100m"
+  hot1500 = "hotcold_4000_1500"
+  split(hot100 " " hot1500 " select_only", workload_order, " ")
+
+  high100 = pctrange(hot100)
+  high1500 = pctrange(hot1500)
   highselect = pctrange("select_only")
 
   for (w = 1; w <= 2; w++) {
@@ -594,36 +606,36 @@ END {
   }
 
   baseline_churn_pgss = \
-    waitcell(baseline, "hotcold_100m", "pgss") + \
-    waitcell(baseline, "hotcold_1500", "pgss")
+    waitcell(baseline, hot100, "pgss") + \
+    waitcell(baseline, hot1500, "pgss")
   patched_churn_pgss = \
-    waitcell(patched, "hotcold_100m", "pgss") + \
-    waitcell(patched, "hotcold_1500", "pgss")
+    waitcell(patched, hot100, "pgss") + \
+    waitcell(patched, hot1500, "pgss")
   patched_churn_new = \
-    waitcell(patched, "hotcold_100m", "dsa") + \
-    waitcell(patched, "hotcold_100m", "hash") + \
-    waitcell(patched, "hotcold_100m", "qtext") + \
-    waitcell(patched, "hotcold_1500", "dsa") + \
-    waitcell(patched, "hotcold_1500", "hash") + \
-    waitcell(patched, "hotcold_1500", "qtext")
+    waitcell(patched, hot100, "dsa") + \
+    waitcell(patched, hot100, "hash") + \
+    waitcell(patched, hot100, "qtext") + \
+    waitcell(patched, hot1500, "dsa") + \
+    waitcell(patched, hot1500, "hash") + \
+    waitcell(patched, hot1500, "qtext")
   baseline_spin = \
-    waitcell(baseline, "hotcold_100m", "spin") + \
-    waitcell(baseline, "hotcold_1500", "spin") + \
+    waitcell(baseline, hot100, "spin") + \
+    waitcell(baseline, hot1500, "spin") + \
     waitcell(baseline, "select_only", "spin")
   patched_spin = \
-    waitcell(patched, "hotcold_100m", "spin") + \
-    waitcell(patched, "hotcold_1500", "spin") + \
+    waitcell(patched, hot100, "spin") + \
+    waitcell(patched, hot1500, "spin") + \
     waitcell(patched, "select_only", "spin")
 
   print "# pg_stat_statements benchmark report"
   print ""
   print "## Summary"
   print ""
-  if (have_workload("hotcold_100m"))
-    print "- hotcold_100m throughput improved by " high100 \
+  if (have_workload(hot100))
+    print "- " hot100 " throughput improved by " high100 \
           " across reported non-single-client points."
-  if (have_workload("hotcold_1500"))
-    print "- hotcold_1500 throughput improved by " high1500 \
+  if (have_workload(hot1500))
+    print "- " hot1500 " throughput improved by " high1500 \
           " across reported non-single-client points."
   if (have_workload("select_only"))
     print "- select_only changed by " highselect \
@@ -666,7 +678,7 @@ END {
         commitfmt(patched, patched_label_hint, patched_url_hint) " |"
   print "| baseline | " \
         commitfmt(baseline, baseline_label_hint, baseline_url_hint) " |"
-  print "| hot/cold duration | " duration["hotcold_100m"] \
+  print "| hot/cold duration | " duration[hot100] \
         " seconds per point |"
   print "| select-only duration | " duration["select_only"] \
         " seconds per point |"
@@ -684,15 +696,15 @@ END {
   print ""
   print "| name | meaning |"
   print "| --- | --- |"
-  print "| `hotcold_100m` | 4,000 stable hot/popular statements plus a large cold/churn keyspace. |"
-  print "| `hotcold_1500` | 4,000 stable hot/popular statements plus 1,500 cold/churn statements. |"
+  print "| `hotcold_4000_100m` | 4,000 stable hot/popular statements plus a large cold/churn keyspace. |"
+  print "| `hotcold_4000_1500` | 4,000 stable hot/popular statements plus 1,500 cold/churn statements. |"
   print "| `pop/unpop` | sampled retained hot/popular entries and cold/churn entries. |"
   print ""
 
   print "## Throughput"
   print ""
-  print_throughput("hotcold_100m")
-  print_throughput("hotcold_1500")
+  print_throughput(hot100)
+  print_throughput(hot1500)
   print_throughput("select_only")
 
   print "## Retention"

@@ -260,7 +260,7 @@ run_point() {
 
   short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
   threads="$(threads_for_clients "$clients")"
-  outdir="$RESULT_ROOT/$label-$short_commit/hotcold_100m/c$clients"
+  outdir="$RESULT_ROOT/$label-$short_commit/hotcold_4000_100m/c$clients"
   mkdir -p "$outdir"
 
   {

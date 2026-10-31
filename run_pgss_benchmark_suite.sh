@@ -758,10 +758,10 @@ run_interleaved() {
   done
 
   if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
-    run_interleaved_hotcold_ladder hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+    run_interleaved_hotcold_ladder hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
   fi
   if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
-    run_interleaved_hotcold_ladder hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+    run_interleaved_hotcold_ladder hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
   fi
   if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
     run_interleaved_select_only_ladder
@@ -779,10 +779,10 @@ run_commit_major() {
     capture_commit_settings "$short_commit"
 
     if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
-      run_hotcold_ladder "$short_commit" hotcold_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+      run_hotcold_ladder "$short_commit" hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
     fi
     if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
-      run_hotcold_ladder "$short_commit" hotcold_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+      run_hotcold_ladder "$short_commit" hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
     fi
     if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
       run_select_only_ladder "$short_commit"
