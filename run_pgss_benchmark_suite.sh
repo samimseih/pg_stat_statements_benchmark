@@ -20,8 +20,8 @@ MAX_THREADS="${MAX_THREADS:-32}"
 PROGRESS_SECONDS="${PROGRESS_SECONDS:-10}"
 PGSS_SAMPLE_SECONDS="${PGSS_SAMPLE_SECONDS:-5}"
 PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
-RUN_HOTCOLD_100M="${RUN_HOTCOLD_100M:-1}"
-RUN_HOTCOLD_1500="${RUN_HOTCOLD_1500:-1}"
+RUN_HOTCOLD_4000_100M="${RUN_HOTCOLD_4000_100M:-1}"
+RUN_HOTCOLD_4000_1500="${RUN_HOTCOLD_4000_1500:-1}"
 RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
 RUN_ORDER="${RUN_ORDER:-commit_major}"
 
@@ -757,11 +757,11 @@ run_interleaved() {
     prepare_commit_install "$commit"
   done
 
-  if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
-    run_interleaved_hotcold_ladder hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+  if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
+    run_interleaved_hotcold_ladder hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql"
   fi
-  if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
-    run_interleaved_hotcold_ladder hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+  if [[ "$RUN_HOTCOLD_4000_1500" == "1" ]]; then
+    run_interleaved_hotcold_ladder hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql"
   fi
   if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
     run_interleaved_select_only_ladder
@@ -778,11 +778,11 @@ run_commit_major() {
     git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
     capture_commit_settings "$short_commit"
 
-    if [[ "$RUN_HOTCOLD_100M" == "1" ]]; then
-      run_hotcold_ladder "$short_commit" hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_100m.sql"
+    if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql"
     fi
-    if [[ "$RUN_HOTCOLD_1500" == "1" ]]; then
-      run_hotcold_ladder "$short_commit" hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_1500.sql"
+    if [[ "$RUN_HOTCOLD_4000_1500" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql"
     fi
     if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
       run_select_only_ladder "$short_commit"

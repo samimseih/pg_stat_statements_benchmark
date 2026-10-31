@@ -31,10 +31,10 @@ count_words() {
 
 commit_count="${COMMIT_COUNT:-2}"
 expected_points=0
-if [[ "${RUN_HOTCOLD_100M:-0}" == "1" ]]; then
+if [[ "${RUN_HOTCOLD_4000_100M:-0}" == "1" ]]; then
   expected_points=$((expected_points + commit_count * $(count_words "${CLIENTS:-}")))
 fi
-if [[ "${RUN_HOTCOLD_1500:-0}" == "1" ]]; then
+if [[ "${RUN_HOTCOLD_4000_1500:-0}" == "1" ]]; then
   expected_points=$((expected_points + commit_count * $(count_words "${CLIENTS:-}")))
 fi
 if [[ "${RUN_SELECT_ONLY:-0}" == "1" ]]; then

@@ -280,7 +280,7 @@ run_point() {
 
   set +e
   "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
-    -P 10 -f "$BENCHMARK_DIR/pgbench_hot_cold_100m.sql" \
+    -P 10 -f "$BENCHMARK_DIR/pgbench_hot_cold_4000_100m.sql" \
     -c "$clients" -j "$threads" -T "$PROFILE_SECONDS" "$PGDATABASE" \
     >"$outdir/pgbench.log" 2>&1 &
   pgbench_pid="$!"

@@ -84,7 +84,7 @@ cold/churn entries.
 
 The default durations can be changed with `HOTCOLD_SECONDS` and
 `SELECT_SECONDS`.  Individual workload groups can be disabled with
-`RUN_HOTCOLD_100M=0`, `RUN_HOTCOLD_1500=0`, or `RUN_SELECT_ONLY=0`.
+`RUN_HOTCOLD_4000_100M=0`, `RUN_HOTCOLD_4000_1500=0`, or `RUN_SELECT_ONLY=0`.
 
 ## What gets captured
 
@@ -142,7 +142,7 @@ COMMITS="patched_commit baseline_commit" ./run_pgss_benchmark_suite.sh
 CLIENTS="32 64 128 256" ./run_pgss_benchmark_suite.sh
 SELECT_CLIENTS="1 2 4 8 16 32 64 128 256" ./run_pgss_benchmark_suite.sh
 HOTCOLD_SECONDS=300 SELECT_SECONDS=300 ./run_pgss_benchmark_suite.sh
-RUN_HOTCOLD_1500=0 ./run_pgss_benchmark_suite.sh
+RUN_HOTCOLD_4000_1500=0 ./run_pgss_benchmark_suite.sh
 RUN_ORDER=interleaved ./run_pgss_benchmark_suite.sh
 PGSS_SAMPLE_SECONDS=5 ./run_pgss_benchmark_suite.sh
 PGSS_QUERY_TEXT_MEMORY=1GB ./run_pgss_benchmark_suite.sh

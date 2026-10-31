@@ -48,7 +48,7 @@ Useful overrides:
 ```sh
 INSTANCE_TYPE=c7i.8xlarge ./launch_benchmark_instance.sh
 HOTCOLD_SECONDS=300 SELECT_SECONDS=300 ./launch_benchmark_instance.sh
-RUN_HOTCOLD_1500=0 ./launch_benchmark_instance.sh
+RUN_HOTCOLD_4000_1500=0 ./launch_benchmark_instance.sh
 RUN_ORDER=interleaved ./launch_benchmark_instance.sh
 AUTO_TERMINATE=0 ./launch_benchmark_instance.sh
 ```
