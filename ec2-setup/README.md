@@ -99,6 +99,35 @@ results/<run-id>/
 It extracts the result tarball if needed, runs the public benchmark report
 generator, and writes `report.md` next to the tarball.
 
+## Dirty Patch Iteration
+
+For profiling and short experiment loops, `push_worktree_patch.sh` can apply
+the current tracked diff from a local PostgreSQL worktree to a running benchmark
+instance without creating a commit:
+
+```sh
+PG_WORKTREE=/path/to/postgres/worktree \
+./push_worktree_patch.sh pgss-profile-run-id
+```
+
+The helper generates `git diff --binary HEAD`, uploads the patch and metadata
+to the run's private S3 result prefix, creates short-lived pre-signed download
+URLs for those exact objects, and applies the patch through SSM on the remote
+PostgreSQL clone.  It records the base commit, branch, diffstat, changed file
+list, and patch SHA-256 under `dirty-patches/<experiment-id>/` in the run
+results.  Untracked files are not included.
+
+By default the helper only applies the patch.  To rebuild and install the
+remote tree after applying it:
+
+```sh
+PG_WORKTREE=/path/to/postgres/worktree REMOTE_REBUILD=1 \
+./push_worktree_patch.sh pgss-profile-run-id
+```
+
+Use this for temporary profiling only.  Published benchmark results should use
+named commits or branches.
+
 ## Connect
 
 Once SSM reports the instance as online:
