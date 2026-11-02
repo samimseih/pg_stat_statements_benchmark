@@ -18,9 +18,9 @@ configured client-count ladder for each workload.
 The README keeps only an index.  The linked pages have the actual analysis:
 throughput, retention, query-text memory, and wait-event diffs.
 
-| date | branch | run | what it compares | results |
-| --- | --- | --- | --- | --- |
-| 2026-11-01 | `pg_stat_statements_custom_kind_only_v2` | EC2 `c7i.8xlarge`, 600 seconds per point, clients `1..256` | PostgreSQL master vs custom cumulative stats kind with external query text | [analysis](reports/2026-11-01-ec2-c7i-8xlarge-custom-kind-600s.md) |
+| date | branch | commit | run | what it compares | results |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-01 | [`pg_stat_statements_custom_kind_only_v2`](https://github.com/samimseih/postgres/tree/pg_stat_statements_custom_kind_only_v2) | [`7bc3659ab09c`](https://github.com/samimseih/postgres/commit/7bc3659ab09c6f73201af0409fa17ddf9757aadb) | EC2 `c7i.8xlarge`, 600 seconds per point, clients `1..256` | PostgreSQL master vs custom cumulative stats kind with external query text | [analysis](reports/2026-11-01-ec2-c7i-8xlarge-custom-kind-600s.md) |
 
 Each result page compares the patched build with the PostgreSQL master
 baseline from the same EC2 run.  Retention and memory triples in the reports
