@@ -256,9 +256,10 @@ EOF
 
   ssm_commands=(
     "set -Eeuo pipefail"
-    "mkdir -p $(quote_word "$remote_experiment_dir")"
+    "install -d -o ec2-user -g ec2-user $(quote_word "$remote_experiment_dir")"
     "if command -v curl >/dev/null 2>&1; then curl -fsSL $(quote_word "$script_url") -o $(quote_word "$remote_experiment_dir/apply_dirty_patch.sh"); else python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' $(quote_word "$script_url") $(quote_word "$remote_experiment_dir/apply_dirty_patch.sh"); fi"
     "chmod +x $(quote_word "$remote_experiment_dir/apply_dirty_patch.sh")"
+    "chown ec2-user:ec2-user $(quote_word "$remote_experiment_dir/apply_dirty_patch.sh")"
     "$run_cmd"
   )
 
