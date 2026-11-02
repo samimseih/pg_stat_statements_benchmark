@@ -581,6 +581,10 @@ END {
                      cell(patched, workload, clients, "final_qtext_count"))
       if (qtext > max_qtext[workload])
         max_qtext[workload] = qtext
+      qtext_file = maxnum(cell(patched, workload, clients, "qtext_file_max"),
+                          cell(patched, workload, clients, "final_qtext_file_size"))
+      if (qtext_file > max_qtext_file[workload])
+        max_qtext_file[workload] = qtext_file
       entry_dsa = maxnum(cell(patched, workload, clients, "entry_dsa_max"),
                          cell(patched, workload, clients, "final_entry_dsa_size"))
       if (entry_dsa > max_entry_dsa)
@@ -648,6 +652,8 @@ END {
     workload = workload_order[w]
     if (!have_workload(workload))
       continue
+    if (max_qtext[workload] == 0)
+      continue
     if (qtext_line != "")
       qtext_line = qtext_line " and "
     qtext_line = qtext_line nfmt(max_qtext[workload]) " for " workload
@@ -655,6 +661,19 @@ END {
   if (qtext_line != "")
     print "- Patched qtext_count high-water from samples/final info was " \
           qtext_line "."
+  qtext_file_line = ""
+  for (w = 1; w <= 2; w++) {
+    workload = workload_order[w]
+    if (!have_workload(workload))
+      continue
+    if (qtext_file_line != "")
+      qtext_file_line = qtext_file_line " and "
+    qtext_file_line = qtext_file_line bytefmt(max_qtext_file[workload]) \
+                      " for " workload
+  }
+  if (qtext_file_line != "")
+    print "- Patched external query-text file high-water was " \
+          qtext_file_line "."
   print "- Empty-query sampled high-water was " \
         nfmt(max_patched_empty_query) " for patched and " \
         nfmt(max_baseline_empty_query) " for baseline."
@@ -745,17 +764,16 @@ END {
   }
   print ""
 
-  print "## Sampled Query Text And Churn"
+  print "## Query Text File And Eviction"
   print ""
-  print "Query-text, empty-query, and memory values from periodic samples are min/avg/max."
-  print "Memory values use human-readable IEC units."
+  print "This run uses the external query text file.  Sampled file values are"
+  print "min/avg/max from periodic samples; final values are captured after each"
+  print "pgbench run."
   print ""
-  print "| workload | clients | patched empty query entries | baseline empty query entries |" \
-        " patched qtext count | patched qtext payload min/avg/max |" \
-        " patched qtext file min/avg/max | baseline qtext file min/avg/max |" \
-        " patched qtext DSA min/avg/max | patched entry DSA min/avg/max | patched dealloc |" \
-        " baseline dealloc |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  print "| workload | clients | patched sampled qtext file |" \
+        " baseline sampled qtext file | patched final qtext file |" \
+        " baseline final qtext file | patched final dealloc | baseline final dealloc |"
+  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (w = 1; w <= 2; w++) {
     workload = workload_order[w]
     for (i = 1; i <= nwanted; i++) {
@@ -763,86 +781,16 @@ END {
       if (!have_pair(workload, clients))
         continue
       print "| " workload " | " clients " | " \
-            triplefmt(cell(patched, workload, clients, "empty_query_min"),
-                      cell(patched, workload, clients, "empty_query_avg"),
-                      cell(patched, workload, clients, "empty_query")) " | " \
-            triplefmt(cell(baseline, workload, clients, "empty_query_min"),
-                      cell(baseline, workload, clients, "empty_query_avg"),
-                      cell(baseline, workload, clients, "empty_query")) " | " \
-            triplefmt(cell(patched, workload, clients, "qtext_min"),
-                      cell(patched, workload, clients, "qtext_avg"),
-                      cell(patched, workload, clients, "qtext")) " | " \
-            triplebytefmt(cell(patched, workload, clients, "qtext_len_min"),
-                          cell(patched, workload, clients, "qtext_len_avg"),
-                          cell(patched, workload, clients, "qtext_len_max")) " | " \
             triplebytefmt(cell(patched, workload, clients, "qtext_file_min"),
                           cell(patched, workload, clients, "qtext_file_avg"),
                           cell(patched, workload, clients, "qtext_file_max")) " | " \
             triplebytefmt(cell(baseline, workload, clients, "qtext_file_min"),
                           cell(baseline, workload, clients, "qtext_file_avg"),
                           cell(baseline, workload, clients, "qtext_file_max")) " | " \
-            triplebytefmt(cell(patched, workload, clients, "qtext_dsa_min"),
-                          cell(patched, workload, clients, "qtext_dsa_avg"),
-                          cell(patched, workload, clients, "qtext_dsa_max")) " | " \
-            triplebytefmt(cell(patched, workload, clients, "entry_dsa_min"),
-                          cell(patched, workload, clients, "entry_dsa_avg"),
-                          cell(patched, workload, clients, "entry_dsa_max")) " | " \
-            nfmt(cell(patched, workload, clients, "dealloc")) " | " \
-            nfmt(cell(baseline, workload, clients, "dealloc")) " |"
-    }
-  }
-  print ""
-
-  print "## Final Gauges"
-  print ""
-  print "Final values from pg_stat_statements_info, captured after each pgbench run."
-  print "These do not require scanning the pg_stat_statements view."
-  print ""
-  print "| workload | clients | patched final entries | patched final qtext count |" \
-        " patched final qtext payload | patched final qtext DSA |" \
-        " patched final qtext file | baseline final qtext file |" \
-        " patched final entry DSA | patched final dealloc | baseline final dealloc |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-  for (w = 1; w <= 3; w++) {
-    workload = workload_order[w]
-    for (i = 1; i <= nwanted; i++) {
-      clients = wanted_clients[i]
-      if (!have_pair(workload, clients))
-        continue
-      print "| " workload " | " clients " | " \
-            nfmt(cell(patched, workload, clients, "final_entry_count")) " | " \
-            nfmt(cell(patched, workload, clients, "final_qtext_count")) " | " \
-            bytefmt(cell(patched, workload, clients, "final_qtext_total_len")) " | " \
-            bytefmt(cell(patched, workload, clients, "final_qtext_dsa_size")) " | " \
             bytefmt(cell(patched, workload, clients, "final_qtext_file_size")) " | " \
             bytefmt(cell(baseline, workload, clients, "final_qtext_file_size")) " | " \
-            bytefmt(cell(patched, workload, clients, "final_entry_dsa_size")) " | " \
             nfmt(cell(patched, workload, clients, "final_entry_dealloc")) " | " \
             nfmt(cell(baseline, workload, clients, "final_entry_dealloc")) " |"
-    }
-  }
-  print ""
-
-  print "## Memory Gauge Averages"
-  print ""
-  print "Average values from the periodic samples. Memory values use human-readable IEC units."
-  print ""
-  print "| workload | clients | avg entries | avg qtext count | avg qtext payload |" \
-        " avg qtext file | avg qtext DSA | avg entry DSA |"
-  print "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-  for (w = 1; w <= 3; w++) {
-    workload = workload_order[w]
-    for (i = 1; i <= nwanted; i++) {
-      clients = wanted_clients[i]
-      if (!have_pair(workload, clients))
-        continue
-      print "| " workload " | " clients " | " \
-            nfmt(cell(patched, workload, clients, "entries_avg")) " | " \
-            nfmt(cell(patched, workload, clients, "qtext_avg")) " | " \
-            bytefmt(cell(patched, workload, clients, "qtext_len_avg")) " | " \
-            bytefmt(cell(patched, workload, clients, "qtext_file_avg")) " | " \
-            bytefmt(cell(patched, workload, clients, "qtext_dsa_avg")) " | " \
-            bytefmt(cell(patched, workload, clients, "entry_dsa_avg")) " |"
     }
   }
   print ""
@@ -861,42 +809,18 @@ END {
   }
   print ""
 
-  print "## Wait Event Diffs"
-  print ""
-  print "Values are patched minus baseline sample counts from the same run."
-  print ""
-  print "| workload | event | baseline samples | patched samples | delta | change |"
-  print "| --- | --- | ---: | ---: | ---: | ---: |"
-  for (w = 1; w <= 3; w++) {
-    workload = workload_order[w]
-    if (!have_workload(workload))
-      continue
-    print_wait_delta_table(workload)
-  }
-  print ""
-
   print "## Notes"
   print ""
   print "- Deallocation counters are eviction-pass counters, matching upstream"
   print "  pg_stat_statements_info semantics."
-  print "- Query-text and entry DSA columns are sampled current-state gauges;"
-  print "  summary.tsv reports their sampled min/avg/max. Older commits that do"
-  print "  not expose them report zero in summary.tsv."
+  print "- Query-text file values are current-state gauges; summary.tsv keeps"
+  print "  raw byte counts and this report prints them with IEC units."
   print "- Empty-query entries are sampled as empty-string query text,"
   print "  separately from null query text."
-  print "- The Markdown report prints memory with IEC units; summary.tsv keeps"
-  print "  raw byte counts for scripts."
-  print "- Final gauges come from pg_stat_statements_info after each pgbench run;"
-  print "  they avoid scanning the full view, so they still work when churn"
-  print "  creates too many rows for pg_stat_statements to materialize."
-  print "- Each commit reuses the same PostgreSQL server across workload groups,"
-  print "  so select_only storage gauges can include DSA space allocated by"
-  print "  earlier churn runs."
   print "- The cpu/no wait column is active backends with no PostgreSQL wait"
   print "  event reported, not an OS CPU counter."
   print "- Patched hot/cold runs removed the old pg_stat_statements LWLock"
-  print "  samples; remaining waits were smaller and split across PgStatsDSA,"
-  print "  PgStatsHash, and qtext paths."
+  print "  samples; remaining replacement waits were smaller."
   print "- Under churn, SpinDelay was smaller than the baseline"
   print "  pg_stat_statements LWLock bottleneck."
 }

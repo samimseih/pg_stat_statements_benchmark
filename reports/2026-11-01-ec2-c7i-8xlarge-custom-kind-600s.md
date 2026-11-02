@@ -6,7 +6,7 @@
 - hotcold_4000_1500 throughput improved by +0.9% to +42.3% across reported non-single-client points.
 - select_only changed by -1.9% to +1.1% across reported non-single-client points.
 - Successful retention samples retained at least 4,000 popular statements at every reported churn point.
-- Patched qtext_count high-water from samples/final info was 0 for hotcold_4000_100m and 0 for hotcold_4000_1500.
+- Patched external query-text file high-water was 9.00 MiB for hotcold_4000_100m and 459 KiB for hotcold_4000_1500.
 - Empty-query sampled high-water was 0 for patched and 0 for baseline.
 - Baseline churn sampled 195,161 pg_stat_statements LWLock waits; patched sampled 0.
 - Patched replacement pgstat/qtext waits under churn totaled 8,075 samples.
@@ -101,100 +101,32 @@ Values are sampled min/avg/max.
 | hotcold_4000_1500 | 128 | 5,502/5,503/5,503 | 4,773/4,872/4,991 | 4,000 | 4,000 | 1,500 | 773/872/991 |
 | hotcold_4000_1500 | 256 | 5,502/5,503/5,503 | 4,750/4,836/4,955 | 4,000 | 4,000 | 1,500 | 750/836/955 |
 
-## Sampled Query Text And Churn
+## Query Text File And Eviction
 
-Query-text, empty-query, and memory values from periodic samples are min/avg/max.
-Memory values use human-readable IEC units.
+This run uses the external query text file.  Sampled file values are
+min/avg/max from periodic samples; final values are captured after each
+pgbench run.
 
-| workload | clients | patched empty query entries | baseline empty query entries | patched qtext count | patched qtext payload min/avg/max | patched qtext file min/avg/max | baseline qtext file min/avg/max | patched qtext DSA min/avg/max | patched entry DSA min/avg/max | patched dealloc | baseline dealloc |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| hotcold_4000_100m | 1 | 0 | 0 | 0 | 0 B | 753 KiB/1.92 MiB/4.80 MiB | 541 KiB/1.33 MiB/2.27 MiB | 0 B | 0 B | 3,650 | 7,271 |
-| hotcold_4000_100m | 2 | 0 | 0 | 0 | 0 B | 688 KiB/2.19 MiB/9.00 MiB | 502 KiB/1005 KiB/1.73 MiB | 0 B | 0 B | 9,394 | 14,330 |
-| hotcold_4000_100m | 4 | 0 | 0 | 0 | 0 B | 1.00 MiB/1.73 MiB/2.36 MiB | 692 KiB/1.34 MiB/2.29 MiB | 0 B | 0 B | 18,243 | 27,570 |
-| hotcold_4000_100m | 8 | 0 | 0 | 0 | 0 B | 643 KiB/1.44 MiB/2.31 MiB | 453 KiB/1.48 MiB/2.37 MiB | 0 B | 0 B | 34,407 | 50,884 |
-| hotcold_4000_100m | 16 | 0 | 0 | 0 | 0 B | 124 KiB/1.12 MiB/1.71 MiB | 400 KiB/1.42 MiB/2.38 MiB | 0 B | 0 B | 60,631 | 85,577 |
-| hotcold_4000_100m | 32 | 0 | 0 | 0 | 0 B | 435 KiB/1.41 MiB/2.23 MiB | 417 KiB/1.32 MiB/2.30 MiB | 0 B | 0 B | 120,777 | 117,666 |
-| hotcold_4000_100m | 64 | 0 | 0 | 0 | 0 B | 485 KiB/1.35 MiB/2.05 MiB | 860 KiB/1.61 MiB/2.35 MiB | 0 B | 0 B | 127,646 | 124,648 |
-| hotcold_4000_100m | 128 | 0 | 0 | 0 | 0 B | 433 KiB/1.58 MiB/2.38 MiB | 753 KiB/1.37 MiB/2.24 MiB | 0 B | 0 B | 128,998 | 123,205 |
-| hotcold_4000_100m | 256 | 0 | 0 | 0 | 0 B | 571 KiB/1.41 MiB/2.07 MiB | 793 KiB/1.83 MiB/2.44 MiB | 0 B | 0 B | 117,937 | 118,973 |
-| hotcold_4000_1500 | 1 | 0 | 0 | 0 | 0 B | 458 KiB/459 KiB/459 KiB | 396 KiB/1.25 MiB/2.03 MiB | 0 B | 0 B | 1 | 3,103 |
-| hotcold_4000_1500 | 2 | 0 | 0 | 0 | 0 B | 458 KiB/459 KiB/459 KiB | 587 KiB/1.41 MiB/2.26 MiB | 0 B | 0 B | 1 | 6,003 |
-| hotcold_4000_1500 | 4 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 378 KiB/1.07 MiB/1.98 MiB | 0 B | 0 B | 1 | 11,789 |
-| hotcold_4000_1500 | 8 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 656 KiB/1.50 MiB/2.26 MiB | 0 B | 0 B | 1 | 22,418 |
-| hotcold_4000_1500 | 16 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 437 KiB/1.29 MiB/2.31 MiB | 0 B | 0 B | 1 | 38,794 |
-| hotcold_4000_1500 | 32 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 609 KiB/1.42 MiB/2.21 MiB | 0 B | 0 B | 1 | 75,327 |
-| hotcold_4000_1500 | 64 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 432 KiB/856 KiB/2.23 MiB | 0 B | 0 B | 1 | 73,333 |
-| hotcold_4000_1500 | 128 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 645 KiB/1.60 MiB/2.37 MiB | 0 B | 0 B | 1 | 70,681 |
-| hotcold_4000_1500 | 256 | 0 | 0 | 0 | 0 B | 457 KiB/459 KiB/459 KiB | 645 KiB/1.43 MiB/2.38 MiB | 0 B | 0 B | 1 | 61,888 |
-
-## Final Gauges
-
-Final values from pg_stat_statements_info, captured after each pgbench run.
-These do not require scanning the pg_stat_statements view.
-
-| workload | clients | patched final entries | patched final qtext count | patched final qtext payload | patched final qtext DSA | patched final qtext file | baseline final qtext file | patched final entry DSA | patched final dealloc | baseline final dealloc |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| hotcold_4000_100m | 1 | 0 | 0 | 0 B | 0 B | 2.27 MiB | 1.38 MiB | 0 B | 3,942 | 7,857 |
-| hotcold_4000_100m | 2 | 0 | 0 | 0 B | 0 B | 1.24 MiB | 1.43 MiB | 0 B | 10,144 | 15,485 |
-| hotcold_4000_100m | 4 | 0 | 0 | 0 B | 0 B | 609 KiB | 1.19 MiB | 0 B | 19,708 | 29,796 |
-| hotcold_4000_100m | 8 | 0 | 0 | 0 B | 0 B | 1.21 MiB | 642 KiB | 0 B | 37,180 | 54,974 |
-| hotcold_4000_100m | 16 | 0 | 0 | 0 B | 0 B | 1.36 MiB | 1.44 MiB | 0 B | 65,520 | 92,490 |
-| hotcold_4000_100m | 32 | 0 | 0 | 0 B | 0 B | 469 KiB | 1.64 MiB | 0 B | 130,448 | 127,188 |
-| hotcold_4000_100m | 64 | 0 | 0 | 0 B | 0 B | 1.57 MiB | 1.70 MiB | 0 B | 137,893 | 134,723 |
-| hotcold_4000_100m | 128 | 0 | 0 | 0 B | 0 B | 1.31 MiB | 1.71 MiB | 0 B | 139,585 | 133,142 |
-| hotcold_4000_100m | 256 | 0 | 0 | 0 B | 0 B | 2.41 MiB | 1.40 MiB | 0 B | 127,267 | 128,589 |
-| hotcold_4000_1500 | 1 | 0 | 0 | 0 B | 0 B | 459 KiB | 1.27 MiB | 0 B | 1 | 3,353 |
-| hotcold_4000_1500 | 2 | 0 | 0 | 0 B | 0 B | 459 KiB | 1.34 MiB | 0 B | 1 | 6,486 |
-| hotcold_4000_1500 | 4 | 0 | 0 | 0 B | 0 B | 459 KiB | 1.30 MiB | 0 B | 1 | 12,734 |
-| hotcold_4000_1500 | 8 | 0 | 0 | 0 B | 0 B | 459 KiB | 2.26 MiB | 0 B | 1 | 24,223 |
-| hotcold_4000_1500 | 16 | 0 | 0 | 0 B | 0 B | 459 KiB | 721 KiB | 0 B | 1 | 41,928 |
-| hotcold_4000_1500 | 32 | 0 | 0 | 0 B | 0 B | 459 KiB | 1.10 MiB | 0 B | 1 | 81,362 |
-| hotcold_4000_1500 | 64 | 0 | 0 | 0 B | 0 B | 459 KiB | 1.31 MiB | 0 B | 1 | 79,254 |
-| hotcold_4000_1500 | 128 | 0 | 0 | 0 B | 0 B | 459 KiB | 1.18 MiB | 0 B | 1 | 76,382 |
-| hotcold_4000_1500 | 256 | 0 | 0 | 0 B | 0 B | 459 KiB | 2.25 MiB | 0 B | 1 | 66,885 |
-| select_only | 1 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.33 KiB | 0 B | 0 | 0 |
-| select_only | 2 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.33 KiB | 0 B | 0 | 0 |
-| select_only | 4 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.33 KiB | 0 B | 0 | 0 |
-| select_only | 8 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.54 KiB | 0 B | 0 | 0 |
-| select_only | 16 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.38 KiB | 0 B | 0 | 0 |
-| select_only | 32 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.33 KiB | 0 B | 0 | 0 |
-| select_only | 64 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.33 KiB | 0 B | 0 | 0 |
-| select_only | 128 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 3.88 KiB | 0 B | 0 | 0 |
-| select_only | 256 | 0 | 0 | 0 B | 0 B | 2.33 KiB | 2.59 KiB | 0 B | 0 | 0 |
-
-## Memory Gauge Averages
-
-Average values from the periodic samples. Memory values use human-readable IEC units.
-
-| workload | clients | avg entries | avg qtext count | avg qtext payload | avg qtext file | avg qtext DSA | avg entry DSA |
+| workload | clients | patched sampled qtext file | baseline sampled qtext file | patched final qtext file | baseline final qtext file | patched final dealloc | baseline final dealloc |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| hotcold_4000_100m | 1 | 5,548 | 0 | 0 B | 1.92 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 2 | 5,372 | 0 | 0 B | 2.19 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 4 | 5,319 | 0 | 0 B | 1.73 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 8 | 5,328 | 0 | 0 B | 1.44 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 16 | 5,276 | 0 | 0 B | 1.12 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 32 | 5,250 | 0 | 0 B | 1.41 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 64 | 5,249 | 0 | 0 B | 1.35 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 128 | 5,232 | 0 | 0 B | 1.58 MiB | 0 B | 0 B |
-| hotcold_4000_100m | 256 | 5,185 | 0 | 0 B | 1.41 MiB | 0 B | 0 B |
-| hotcold_4000_1500 | 1 | 5,502 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 2 | 5,502 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 4 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 8 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 16 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 32 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 64 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 128 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| hotcold_4000_1500 | 256 | 5,503 | 0 | 0 B | 459 KiB | 0 B | 0 B |
-| select_only | 1 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 2 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 4 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 8 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 16 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 32 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 64 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 128 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
-| select_only | 256 | 6 | 0 | 0 B | 2.19 KiB | 0 B | 0 B |
+| hotcold_4000_100m | 1 | 753 KiB/1.92 MiB/4.80 MiB | 541 KiB/1.33 MiB/2.27 MiB | 2.27 MiB | 1.38 MiB | 3,942 | 7,857 |
+| hotcold_4000_100m | 2 | 688 KiB/2.19 MiB/9.00 MiB | 502 KiB/1005 KiB/1.73 MiB | 1.24 MiB | 1.43 MiB | 10,144 | 15,485 |
+| hotcold_4000_100m | 4 | 1.00 MiB/1.73 MiB/2.36 MiB | 692 KiB/1.34 MiB/2.29 MiB | 609 KiB | 1.19 MiB | 19,708 | 29,796 |
+| hotcold_4000_100m | 8 | 643 KiB/1.44 MiB/2.31 MiB | 453 KiB/1.48 MiB/2.37 MiB | 1.21 MiB | 642 KiB | 37,180 | 54,974 |
+| hotcold_4000_100m | 16 | 124 KiB/1.12 MiB/1.71 MiB | 400 KiB/1.42 MiB/2.38 MiB | 1.36 MiB | 1.44 MiB | 65,520 | 92,490 |
+| hotcold_4000_100m | 32 | 435 KiB/1.41 MiB/2.23 MiB | 417 KiB/1.32 MiB/2.30 MiB | 469 KiB | 1.64 MiB | 130,448 | 127,188 |
+| hotcold_4000_100m | 64 | 485 KiB/1.35 MiB/2.05 MiB | 860 KiB/1.61 MiB/2.35 MiB | 1.57 MiB | 1.70 MiB | 137,893 | 134,723 |
+| hotcold_4000_100m | 128 | 433 KiB/1.58 MiB/2.38 MiB | 753 KiB/1.37 MiB/2.24 MiB | 1.31 MiB | 1.71 MiB | 139,585 | 133,142 |
+| hotcold_4000_100m | 256 | 571 KiB/1.41 MiB/2.07 MiB | 793 KiB/1.83 MiB/2.44 MiB | 2.41 MiB | 1.40 MiB | 127,267 | 128,589 |
+| hotcold_4000_1500 | 1 | 458 KiB/459 KiB/459 KiB | 396 KiB/1.25 MiB/2.03 MiB | 459 KiB | 1.27 MiB | 1 | 3,353 |
+| hotcold_4000_1500 | 2 | 458 KiB/459 KiB/459 KiB | 587 KiB/1.41 MiB/2.26 MiB | 459 KiB | 1.34 MiB | 1 | 6,486 |
+| hotcold_4000_1500 | 4 | 457 KiB/459 KiB/459 KiB | 378 KiB/1.07 MiB/1.98 MiB | 459 KiB | 1.30 MiB | 1 | 12,734 |
+| hotcold_4000_1500 | 8 | 457 KiB/459 KiB/459 KiB | 656 KiB/1.50 MiB/2.26 MiB | 459 KiB | 2.26 MiB | 1 | 24,223 |
+| hotcold_4000_1500 | 16 | 457 KiB/459 KiB/459 KiB | 437 KiB/1.29 MiB/2.31 MiB | 459 KiB | 721 KiB | 1 | 41,928 |
+| hotcold_4000_1500 | 32 | 457 KiB/459 KiB/459 KiB | 609 KiB/1.42 MiB/2.21 MiB | 459 KiB | 1.10 MiB | 1 | 81,362 |
+| hotcold_4000_1500 | 64 | 457 KiB/459 KiB/459 KiB | 432 KiB/856 KiB/2.23 MiB | 459 KiB | 1.31 MiB | 1 | 79,254 |
+| hotcold_4000_1500 | 128 | 457 KiB/459 KiB/459 KiB | 645 KiB/1.60 MiB/2.37 MiB | 459 KiB | 1.18 MiB | 1 | 76,382 |
+| hotcold_4000_1500 | 256 | 457 KiB/459 KiB/459 KiB | 645 KiB/1.43 MiB/2.38 MiB | 459 KiB | 2.25 MiB | 1 | 66,885 |
 
 ## Wait Events
 
@@ -207,50 +139,17 @@ Average values from the periodic samples. Memory values use human-readable IEC u
 | select_only | baseline | 63,150 | 0 | 0 | 0 | 0 | 2,955 | 27,977 | 20,872 |
 | select_only | patched | 58,954 | 0 | 0 | 0 | 0 | 399 | 27,866 | 20,023 |
 
-## Wait Event Diffs
-
-Values are patched minus baseline sample counts from the same run.
-
-| workload | event | baseline samples | patched samples | delta | change |
-| --- | --- | ---: | ---: | ---: | ---: |
-| hotcold_4000_100m | active samples | 204,499 | 189,762 | -14,737 | -7.2% |
-| hotcold_4000_100m | pg_stat_statements LWLock | 147,261 | 0 | -147,261 | -100.0% |
-| hotcold_4000_100m | PgStatsDSA LWLock | 0 | 6,772 | +6,772 | new |
-| hotcold_4000_100m | PgStatsHash LWLock | 0 | 1,303 | +1,303 | new |
-| hotcold_4000_100m | SpinDelay | 4,445 | 398 | -4,047 | -91.0% |
-| hotcold_4000_100m | ClientRead | 28,178 | 20,786 | -7,392 | -26.2% |
-| hotcold_4000_100m | cpu/no wait | 24,615 | 42,545 | +17,930 | +72.8% |
-| hotcold_4000_1500 | active samples | 103,817 | 48,571 | -55,246 | -53.2% |
-| hotcold_4000_1500 | pg_stat_statements LWLock | 47,900 | 0 | -47,900 | -100.0% |
-| hotcold_4000_1500 | SpinDelay | 1,466 | 0 | -1,466 | -100.0% |
-| hotcold_4000_1500 | ClientRead | 32,340 | 28,237 | -4,103 | -12.7% |
-| hotcold_4000_1500 | cpu/no wait | 22,111 | 20,332 | -1,779 | -8.0% |
-| select_only | active samples | 63,150 | 58,954 | -4,196 | -6.6% |
-| select_only | SpinDelay | 2,955 | 399 | -2,556 | -86.5% |
-| select_only | ClientRead | 27,977 | 27,866 | -111 | -0.4% |
-| select_only | cpu/no wait | 20,872 | 20,023 | -849 | -4.1% |
-
 ## Notes
 
 - Deallocation counters are eviction-pass counters, matching upstream
   pg_stat_statements_info semantics.
-- Query-text and entry DSA columns are sampled current-state gauges;
-  summary.tsv reports their sampled min/avg/max. Older commits that do
-  not expose them report zero in summary.tsv.
+- Query-text file values are current-state gauges; summary.tsv keeps
+  raw byte counts and this report prints them with IEC units.
 - Empty-query entries are sampled as empty-string query text,
   separately from null query text.
-- The Markdown report prints memory with IEC units; summary.tsv keeps
-  raw byte counts for scripts.
-- Final gauges come from pg_stat_statements_info after each pgbench run;
-  they avoid scanning the full view, so they still work when churn
-  creates too many rows for pg_stat_statements to materialize.
-- Each commit reuses the same PostgreSQL server across workload groups,
-  so select_only storage gauges can include DSA space allocated by
-  earlier churn runs.
 - The cpu/no wait column is active backends with no PostgreSQL wait
   event reported, not an OS CPU counter.
 - Patched hot/cold runs removed the old pg_stat_statements LWLock
-  samples; remaining waits were smaller and split across PgStatsDSA,
-  PgStatsHash, and qtext paths.
+  samples; remaining replacement waits were smaller.
 - Under churn, SpinDelay was smaller than the baseline
   pg_stat_statements LWLock bottleneck.
