@@ -70,6 +70,7 @@ If the account does not have a default VPC, set `VPC_ID` and `SUBNET_ID`.
 ```sh
 ./status_instance.sh
 ./live_status.sh
+./pgbench_progress.sh
 ./fetch_results.sh
 ./analyze_results.sh
 ```
@@ -80,6 +81,14 @@ still running.  For the raw process list and benchmark log tail:
 
 ```sh
 LIVE_VERBOSE=1 ./live_status.sh
+```
+
+`pgbench_progress.sh` tails the newest remote `pgbench.log` for a running
+benchmark, including `pgbench -P` progress rows:
+
+```sh
+./pgbench_progress.sh pgss-2p5h-20261015T122532Z
+PG_PROGRESS_LINES=200 ./pgbench_progress.sh
 ```
 
 Results are copied to:
