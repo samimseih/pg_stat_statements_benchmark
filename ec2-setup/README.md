@@ -71,6 +71,7 @@ If the account does not have a default VPC, set `VPC_ID` and `SUBNET_ID`.
 ./status_instance.sh
 ./live_status.sh
 ./pgbench_progress.sh
+./sample_status.sh
 ./fetch_results.sh
 ./analyze_results.sh
 ```
@@ -89,6 +90,15 @@ benchmark, including `pgbench -P` progress rows:
 ```sh
 ./pgbench_progress.sh pgss-2p5h-20261015T122532Z
 PG_PROGRESS_LINES=200 ./pgbench_progress.sh
+```
+
+`sample_status.sh` reads the newest remote `monitor_pgss.tsv` and
+`monitor_qtext_file.tsv` sample files for a run, even while the point is still
+running.  Use it to inspect entry retention, pop/unpop buckets, max entries,
+query text file size, and final gauges:
+
+```sh
+./sample_status.sh pgss-2p5h-20261015T122532Z
 ```
 
 Results are copied to:
