@@ -97,13 +97,17 @@ sql_at() {
 }
 
 qtext_file_size() {
-  local qtext_file="$PGDATA/pg_stat_tmp/pgss_query_texts.stat"
+  local total=0
+  local qtext_file
 
-  if [[ -f "$qtext_file" ]]; then
-    wc -c <"$qtext_file"
-  else
-    echo 0
-  fi
+  shopt -s nullglob
+  for qtext_file in "$PGDATA"/pg_stat_tmp/pgss_query_texts.stat \
+                    "$PGDATA"/pg_stat_tmp/pgss_query_texts_*.stat; do
+    total=$((total + $(wc -c <"$qtext_file")))
+  done
+  shopt -u nullglob
+
+  echo "$total"
 }
 
 reset_pgss() {
