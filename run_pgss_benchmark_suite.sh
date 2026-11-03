@@ -103,6 +103,7 @@ qtext_file_size() {
   shopt -s nullglob
   for qtext_file in "$PGDATA"/pg_stat_tmp/pgss_query_texts.stat \
                     "$PGDATA"/pg_stat_tmp/pgss_query_texts_*.stat; do
+    [[ -f "$qtext_file" ]] || continue
     total=$((total + $(wc -c <"$qtext_file")))
   done
   shopt -u nullglob
