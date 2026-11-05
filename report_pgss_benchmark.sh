@@ -787,9 +787,13 @@ END {
 
   print "## Throughput"
   print ""
-  print "Stddev, CV (stddev / mean) and sample min-max are those of the"
-  print "pgbench progress samples of each point; the trend tells a sustained"
-  print "change over time from a dip recovered from.  See TPS Stability."
+  print "> **How to read this:** delta is patched TPS over baseline TPS."
+  print "> Stddev, CV (stddev / mean) and sample min-max are those of the pgbench"
+  print "> progress samples of each point: a CV under 2% is a steady run, high for"
+  print "> both commits is noise of the machine, higher for the patched commit only"
+  print "> is the patch.  The trend tells a sustained change over the run"
+  print "> (degrading needs attention) from a hiccup (dip recovered).  See TPS"
+  print "> Stability for histograms and TPS over time."
   print ""
   print_throughput(hot100)
   print_throughput(hot1500)

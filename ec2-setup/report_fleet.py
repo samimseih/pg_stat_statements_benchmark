@@ -21,6 +21,63 @@ STABILITY = os.path.join(SCRIPT_DIR, "..", "report_tps_stability.sh")
 BUCKETS = ["<50%", "50-80%", "80-95%", "95-105%", "105-120%", ">=120%"]
 CV_BUCKETS = float(os.environ.get("TPS_CV_BUCKETS", "5"))
 
+# Explanations printed under the tables, as markdown blockquotes.
+NOTE_PROGRESS = """\
+**How to read this:** points done counts the finished patch and base runs of
+each instance, out of all its workloads and numbers of clients.  State is
+done once the results archive is uploaded."""
+
+NOTE_MAIN = """\
+**How to read this:** each cell shows the patch value, then the base value.
+- **Performance ratio:** patch TPS / base TPS; above 1.00 the patch is
+  faster.  Trust ratios more when the CVs of both builds are low.
+- **TPS stddev, CV, sample min-max:** spread of the pgbench progress samples
+  of the point, one every PROGRESS_SECONDS, without the first.  CV is stddev
+  / mean: under 2% is a steady run, 5% or more gets a histogram below.  A CV
+  high for both builds is noise of the instance; higher for the patch only
+  is the patch.  Min-max shows short stalls and bursts.
+- **TPS trend:** how TPS changes over the run, see the TPS over time table.
+  Steady is good; degrading is a sustained decline, or a drop not recovered
+  from, and needs attention; dip recovered is a hiccup.
+- **Entries min/avg/max:** sampled number of pg_stat_statements entries;
+  the max may slightly exceed pg_stat_statements.max with the patch.
+- **Popular kept (min):** fewest of the 4000 popular statements present in
+  a sample; 4000 means eviction never removed a popular one.  n/a for
+  select_only, which runs few statements.
+- **Text file max MB:** largest size of the query text file.
+- **Failed:** pgbench transactions that failed."""
+
+NOTE_PROFILE = """\
+**How to read this:** the run of each point is cut into equal time segments,
+in time order (1 minute each for 5-minute points), with their mean TPS.
+- **degrading:** the last segment is TPS_DRIFT_PCT (5%) or more below the
+  first, and TPS mostly goes down along the way, which includes a drop not
+  recovered from.  The serious case.
+- **declined:** as low at the end, without a sustained decline.
+- **dip recovered:** a segment fell that much, but the last one is back
+  within it of the first: a hiccup.
+- **improving, rose:** the same upward."""
+
+NOTE_HISTOGRAM = """\
+**How to read this:** each progress sample is compared with the median TPS
+of its point, and counted in a bucket: <50% is a severe stall, 50-80% and
+80-95% are slower samples, 95-105% is the normal band, 105-120% and >=120%
+are faster bursts.
+- **Healthy:** almost all samples in 95-105%.
+- **Stalls:** counts in <50% or 50-80%, hidden by the average TPS.
+- **Two speeds:** counts piled in two separate buckets, a run alternating
+  between a fast and a slow phase.
+- **Instance noise:** the same spread for patch and base.
+
+Buckets are relative to the median, so they compare across TPS levels; they
+do not show when samples happened, which the trend does."""
+
+
+def note(text):
+    print()
+    for line in text.splitlines():
+        print(f"> {line}" if line else ">")
+
 
 def read_tsv(path):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
@@ -99,7 +156,8 @@ def main():
                  if p else "-"),
                 (f"{b['min_entries']}/{b['avg_entries']}/{b['max_entries']}"
                  if b else "-"),
-                pair(p, b, lambda r: r["min_pop_entries"]),
+                ("n/a" if w == "select_only"
+                 else pair(p, b, lambda r: r["min_pop_entries"])),
                 pair(p, b, lambda r: f"{float(r['max_qtext_file_size']) / 1048576:.2f}"),
                 pair(p, b, lambda r: r["failed"]),
             ]) + " |"))
@@ -116,6 +174,7 @@ def main():
                             [w, str(c), t, name, s["samples"],
                              f"{float(s['cv_pct']):.1f}%"]
                             + s["buckets"].split()) + " |"))
+    note(NOTE_PROGRESS)
     print()
 
     print("| Workload | Clients | Instance | TPS patch / base | Performance ratio "
@@ -126,6 +185,7 @@ def main():
     print("|---" * 14 + "|")
     for _, line in sorted(rows):
         print(line)
+    note(NOTE_MAIN)
     print()
 
     if profiles:
@@ -140,6 +200,7 @@ def main():
         print("|---" * (5 + nseg) + "|")
         for _, line in sorted(profiles):
             print(line)
+        note(NOTE_PROFILE)
     else:
         print("All points are steady over time.")
     print()
@@ -156,6 +217,7 @@ def main():
     print("|---" * (6 + len(BUCKETS)) + "|")
     for _, line in sorted(hists):
         print(line)
+    note(NOTE_HISTOGRAM)
 
 
 main()

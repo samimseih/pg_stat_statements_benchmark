@@ -262,6 +262,18 @@ END {
 
   if (format == "tsv")
     exit
+    print ""
+    print "> **How to read this:** statistics of the pgbench progress samples of each"
+    print "> point, one every PROGRESS_SECONDS, without the first."
+    print "> - **CV** is stddev / mean: under 2% is a steady run, 5% or more gets a"
+    print ">   histogram below.  A CV high for both commits is noise of the machine;"
+    print ">   higher for the patched commit only is the patch."
+    print "> - **min, p5, p50, p95, max** show short stalls and bursts the mean hides."
+    print "> - **drift** is the change of the mean TPS from the first to the last time"
+    print ">   segment, and **trend** its shape: steady is good; degrading is a"
+    print ">   sustained decline, or a drop not recovered from, and needs attention;"
+    print ">   dip recovered is a hiccup; declined, improving and rose are the other"
+    print ">   cases."
   print ""
   if (nunstable == 0)
     print "No point has a CV of " cv_buckets "% or more."
@@ -289,6 +301,17 @@ END {
         printf " %s |", h[b]
       print ""
     }
+      print ""
+      print "> **How to read this:** each sample is counted by its TPS relative to the"
+      print "> median of its point: <50% is a severe stall, 50-80% and 80-95% are slower"
+      print "> samples, 95-105% is the normal band, 105-120% and >=120% are faster bursts."
+      print "> - **Healthy:** almost all samples in 95-105%."
+      print "> - **Stalls:** counts in <50% or 50-80%, hidden by the average TPS."
+      print "> - **Two speeds:** counts piled in two separate buckets, a run alternating"
+      print ">   between a fast and a slow phase."
+      print "> - **Machine noise:** the same spread for both commits."
+      print ">"
+      print "> Buckets do not show when samples happened, which the trend does."
   }
 
   print ""
@@ -316,4 +339,9 @@ END {
       printf " %s |", kfmt(h[g])
     print ""
   }
+  print ""
+  print "> **How to read this:** the run of each point is cut into equal time"
+  print "> segments, in time order, with their mean TPS.  Degrading, a sustained"
+  print "> decline or a drop not recovered from, is the serious case; dip recovered"
+  print "> is a hiccup."
 }'

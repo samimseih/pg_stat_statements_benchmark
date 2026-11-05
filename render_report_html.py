@@ -17,7 +17,8 @@ def inline(text: str) -> str:
         if len(part) >= 2 and part[0] == "`" and part[-1] == "`":
             rendered.append("<code>" + html.escape(part[1:-1]) + "</code>")
         else:
-            rendered.append(html.escape(part))
+            rendered.append(re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>",
+                                   html.escape(part)))
 
     return "".join(rendered)
 
@@ -104,11 +105,26 @@ def render_markdown(markdown: str) -> str:
             table, i = render_table(lines, i)
             body.append(table)
             continue
+        if line.startswith(">"):
+            # A "How to read this" note: a blockquote, rendered as a box
+            # next to its table.
+            quoted: list[str] = []
+            while i < len(lines) and lines[i].startswith(">"):
+                quoted.append(re.sub(r"^> ?", "", lines[i]))
+                i += 1
+            body.append('<aside class="note">' + render_markdown("\n".join(quoted))
+                        + "</aside>")
+            continue
         if line.startswith("- "):
             body.append("<ul>")
             while i < len(lines) and lines[i].startswith("- "):
-                body.append(f"<li>{inline(lines[i][2:].strip())}</li>")
+                item = [lines[i][2:].strip()]
                 i += 1
+                # Continuation lines of the item, indented.
+                while i < len(lines) and lines[i].startswith("  ") and lines[i].strip():
+                    item.append(lines[i].strip())
+                    i += 1
+                body.append(f"<li>{inline(' '.join(item))}</li>")
             body.append("</ul>")
             continue
 
@@ -119,6 +135,8 @@ def render_markdown(markdown: str) -> str:
             and lines[i].strip()
             and not lines[i].startswith("#")
             and not lines[i].startswith("|")
+            and not lines[i].startswith("- ")
+            and not lines[i].startswith(">")
         ):
             paragraph.append(lines[i].strip())
             i += 1
@@ -146,6 +164,9 @@ h3 {{ margin: 24px 0 10px; font-size: 16px; }}
 p {{ margin: 8px 0; color: var(--muted); }}
 ul {{ margin: 8px 0 18px; color: var(--muted); }}
 li {{ margin: 4px 0; }}
+aside.note {{ margin: 6px 0 24px; padding: 10px 16px; border-left: 4px solid #4c7fd1; background: #f3f6fb; border-radius: 0 6px 6px 0; font-size: 13.5px; }}
+aside.note p, aside.note ul {{ margin: 4px 0; color: var(--text); }}
+aside.note strong {{ font-weight: 650; }}
 code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; background: #f6f8fa; padding: 0.12em 0.32em; border-radius: 4px; }}
 .table-wrap {{ overflow-x: auto; margin: 12px 0 22px; border: 1px solid var(--border); border-radius: 8px; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }}
