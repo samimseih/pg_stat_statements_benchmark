@@ -2,7 +2,7 @@
 """Report the results of a fleet fetched by fetch_fleet_status.sh.
 
 Prints the progress of each instance, then one markdown table comparing the
-patch and the base for each workload, number of clients and instance type,
+patch and upstream (the base commit) for each workload, number of clients and instance type,
 smallest instance first, then the TPS histograms of the points whose TPS
 varies by a CV of TPS_CV_BUCKETS percent or more.  The TPS spread and trend
 of each point come from its pgbench progress samples, see
@@ -23,13 +23,14 @@ CV_BUCKETS = float(os.environ.get("TPS_CV_BUCKETS", "5"))
 
 # Explanations printed under the tables, as markdown blockquotes.
 NOTE_PROGRESS = """\
-**How to read this:** points done counts the finished patch and base runs of
+**How to read this:** points done counts the finished patch and upstream runs of
 each instance, out of all its workloads and numbers of clients.  State is
 done once the results archive is uploaded."""
 
 NOTE_MAIN = """\
-**How to read this:** each cell shows the patch value, then the base value.
-- **Performance ratio:** patch TPS / base TPS; above 1.00 the patch is
+**How to read this:** each cell shows the patch value, then the upstream value (the base
+commit, without the patch).
+- **Performance ratio:** patch TPS / upstream TPS; above 1.00 the patch is
   faster.  Trust ratios more when the CVs of both builds are low.
 - **TPS stddev, CV, sample min-max:** spread of the pgbench progress samples
   of the point, one every PROGRESS_SECONDS, without the first.  CV is stddev
@@ -71,7 +72,7 @@ are faster bursts.
 - **Stalls:** counts in <50% or 50-80%, hidden by the average TPS.
 - **Two speeds:** counts piled in two separate buckets, a run alternating
   between a fast and a slow phase.
-- **Instance noise:** the same spread for patch and base.
+- **Instance noise:** the same spread for patch and upstream.
 
 Buckets are relative to the median, so they compare across TPS levels; they
 do not show when samples happened, which the trend does."""
@@ -166,13 +167,13 @@ def main():
                 pair(p, b, lambda r: r["failed"]),
             ]) + " |"))
             if any(s and s["trend"] != "steady" for s in (sp, sb)):
-                for order, (name, s) in enumerate((("patch", sp), ("base", sb))):
+                for order, (name, s) in enumerate((("patch", sp), ("upstream", sb))):
                     if s:
                         profiles.append(((w, c, rank, order), "| " + " | ".join(
                             [w, str(c), t, name, trend(s)]
                             + [k(x) for x in s["segments"].split()]) + " |"))
             if any(s and float(s["cv_pct"]) >= CV_BUCKETS for s in (sp, sb)):
-                for order, (name, s) in enumerate((("patch", sp), ("base", sb))):
+                for order, (name, s) in enumerate((("patch", sp), ("upstream", sb))):
                     if s:
                         hists.append(((w, c, rank, order), "| " + " | ".join(
                             [w, str(c), t, name, s["samples"],
@@ -181,11 +182,11 @@ def main():
     note(NOTE_PROGRESS)
     print()
 
-    print("| Workload | Clients | Instance | TPS patch / base | Performance ratio "
-          "| TPS stddev patch / base | TPS CV patch / base | Sample TPS min-max patch / base "
-          "| TPS trend patch / base "
-          "| Entries min/avg/max, patch | Entries min/avg/max, base "
-          "| Popular kept (min) patch / base | Text file max MB patch / base | Failed patch / base |")
+    print("| Workload | Clients | Instance | TPS patch / upstream | Performance ratio "
+          "| TPS stddev patch / upstream | TPS CV patch / upstream | Sample TPS min-max patch / upstream "
+          "| TPS trend patch / upstream "
+          "| Entries min/avg/max, patch | Entries min/avg/max, upstream "
+          "| Popular kept (min) patch / upstream | Text file max MB patch / upstream | Failed patch / upstream |")
     print("|---" * 14 + "|")
     for _, line in sorted(rows):
         print(line)
