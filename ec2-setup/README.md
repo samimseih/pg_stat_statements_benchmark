@@ -107,6 +107,27 @@ refused.
 
 ## Status And Results
 
+For a fleet, running or done:
+
+```sh
+./fetch_fleet_status.sh pgss-fleet-20261105T160600Z
+./report_fleet.py pgss-fleet-20261105T160600Z
+```
+
+`fetch_fleet_status.sh` saves the summary and pgbench progress samples of
+each instance in `results/fleet/<fleet id>`, from the instance through SSM
+and S3 while it runs, or from its results archive once done.
+`report_fleet.py` prints the points done by each instance, then one table
+comparing patch and base for each workload, number of clients and instance
+type, smallest first: TPS and ratio, the stddev, CV (stddev / mean) and
+min-max of the TPS progress samples, entries min/avg/max, popular entries
+kept, query text file size and failures.  Last, for the points with a TPS CV
+of `TPS_CV_BUCKETS` percent (default 5) or more, histograms of their samples
+by TPS relative to the median of the point, which tell apart steady noise
+from runs alternating between fast and slow phases.
+
+For one instance:
+
 ```sh
 ./status_instance.sh
 ./live_status.sh

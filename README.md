@@ -109,8 +109,10 @@ The default durations can be changed with `HOTCOLD_SECONDS` and
 pgbench reports its progress every `PROGRESS_SECONDS` (default 2).  The
 samples of each point are saved in `progress.tsv`, and
 `report_tps_stability.sh` reports their spread (stddev, CV, percentiles) with a
-histogram for unstable points, because the final TPS of a point averages over
-phases that may differ.  `report_pgss_benchmark.sh` includes this report.
+histogram for the points with a CV of `TPS_CV_BUCKETS` percent (default 5) or
+more, because the final TPS of a point averages over phases that may differ.
+`report_pgss_benchmark.sh` shows the stddev, CV and sample min-max next to
+the TPS of each point, and includes this report.
 
 ## What gets captured
 

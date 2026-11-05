@@ -14,7 +14,7 @@
 #   TPS_SKIP_SAMPLES   leading samples of each point ignored, as warmup (1)
 #   TPS_MIN_SAMPLES    fewer samples than this leave the statistics empty (5)
 #   TPS_CV_BUCKETS     points with a CV at or above this percentage get a
-#                      bucket histogram (10)
+#                      bucket histogram (5)
 #   TPS_FORMAT         "markdown" (default), or "tsv" for one row per point
 set -Eeuo pipefail
 
@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE="${1:-$(ls -td "$SCRIPT_DIR"/results/* 2>/dev/null | head -n 1)}"
 TPS_SKIP_SAMPLES="${TPS_SKIP_SAMPLES:-1}"
 TPS_MIN_SAMPLES="${TPS_MIN_SAMPLES:-5}"
-TPS_CV_BUCKETS="${TPS_CV_BUCKETS:-10}"
+TPS_CV_BUCKETS="${TPS_CV_BUCKETS:-5}"
 TPS_FORMAT="${TPS_FORMAT:-markdown}"
 
 die() {

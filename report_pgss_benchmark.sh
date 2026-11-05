@@ -191,6 +191,29 @@ augment_summary_with_final_info() {
 
 augment_summary_with_final_info "$summary" "$summary_for_report"
 
+# Add the TPS spread of each point, from its pgbench progress samples, to
+# the summary.
+stability="$tmpdir/stability.tsv"
+TPS_FORMAT=tsv "$SCRIPT_DIR/report_tps_stability.sh" "$RESULT_DIR" >"$stability" 2>/dev/null ||
+  : >"$stability"
+awk -F $'\t' -v OFS=$'\t' '
+  FNR == NR {
+    if (FNR > 1 && $5 != "")
+      spread[$1 SUBSEP $2 SUBSEP $3] = $6 OFS $7 OFS $8 OFS $12
+    next
+  }
+  FNR == 1 {
+    for (i = 1; i <= NF; i++)
+      col[$i] = i
+    print $0, "tps_stddev", "tps_cv_pct", "tps_sample_min", "tps_sample_max"
+    next
+  }
+  {
+    k = $col["commit"] SUBSEP $col["workload"] SUBSEP $col["clients"]
+    print $0, (k in spread ? spread[k] : OFS OFS OFS)
+  }' "$stability" "$summary_for_report" >"$summary_for_report.new"
+mv "$summary_for_report.new" "$summary_for_report"
+
 find "$RESULT_DIR" -path '*/waits.tsv' -type f | sort |
 while IFS= read -r file; do
   rel="${file#$RESULT_DIR/}"
@@ -387,21 +410,43 @@ function maxnum(a, b) {
   return b
 }
 
+# The stddev and CV of the progress samples of a point, see
+# report_tps_stability.sh.
+function spreadfmt(commit, workload, clients) {
+  if (cell(commit, workload, clients, "tps_cv") == "")
+    return "-"
+  return nfmt(cell(commit, workload, clients, "tps_stddev")) " / " \
+         sprintf("%.1f%%", cell(commit, workload, clients, "tps_cv"))
+}
+
+function samplerangefmt(commit, workload, clients) {
+  if (cell(commit, workload, clients, "tps_min") == "")
+    return "-"
+  return nfmt(cell(commit, workload, clients, "tps_min")) "-" \
+         nfmt(cell(commit, workload, clients, "tps_max"))
+}
+
 function print_throughput(workload, i, clients, p, b) {
   if (!have_workload(workload))
     return
 
   print "### " workload
   print ""
-  print "| clients | patched TPS | baseline TPS | delta |"
-  print "| ---: | ---: | ---: | ---: |"
+  print "| clients | patched TPS | baseline TPS | delta |" \
+        " patched stddev / CV | baseline stddev / CV |" \
+        " patched sample min-max | baseline sample min-max |"
+  print "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   for (i = 1; i <= nwanted; i++) {
     clients = wanted_clients[i]
     if (!have_pair(workload, clients))
       continue
     p = cell(patched, workload, clients, "tps")
     b = cell(baseline, workload, clients, "tps")
-    print "| " clients " | " nfmt(p) " | " nfmt(b) " | " pct(p, b) " |"
+    print "| " clients " | " nfmt(p) " | " nfmt(b) " | " pct(p, b) " | " \
+          spreadfmt(patched, workload, clients) " | " \
+          spreadfmt(baseline, workload, clients) " | " \
+          samplerangefmt(patched, workload, clients) " | " \
+          samplerangefmt(baseline, workload, clients) " |"
   }
   print ""
 }
@@ -475,6 +520,10 @@ FNR == NR {
 
   key = commit SUBSEP workload SUBSEP clients
   data[key SUBSEP "tps"] = $col["tps"] + 0
+  data[key SUBSEP "tps_stddev"] = $col["tps_stddev"]
+  data[key SUBSEP "tps_cv"] = $col["tps_cv_pct"]
+  data[key SUBSEP "tps_min"] = $col["tps_sample_min"]
+  data[key SUBSEP "tps_max"] = $col["tps_sample_max"]
   data[key SUBSEP "duration"] = $col["duration_s"] + 0
   data[key SUBSEP "entries"] = $col["max_entries"] + 0
   data[key SUBSEP "entries_min"] = \
@@ -721,6 +770,9 @@ END {
   print ""
 
   print "## Throughput"
+  print ""
+  print "Stddev, CV (stddev / mean) and sample min-max are those of the"
+  print "pgbench progress samples of each point, see TPS Stability."
   print ""
   print_throughput(hot100)
   print_throughput(hot1500)
