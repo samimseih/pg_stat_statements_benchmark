@@ -27,6 +27,12 @@
 #   degrading      the last segment is TPS_DRIFT_PCT lower than the first,
 #                  and the segments mostly decline: Kendall tau <= -0.6,
 #                  which includes a drop not recovered from
+#   settling       degrading, but levelling off: the decline is front
+#                  loaded (the first step is at least the average step),
+#                  the last segment is within a quarter of TPS_DRIFT_PCT of
+#                  the one before, and the last step is less than half the
+#                  first, a run reaching a lower steady state rather than
+#                  bleeding; a later drop not recovered from stays degrading
 #   declined       the last segment is TPS_DRIFT_PCT lower, without a
 #                  sustained decline
 #   improving      the last segment is TPS_DRIFT_PCT higher, and the
@@ -207,8 +213,18 @@ END {
     for (g = 2; g <= nsegments; g++)
       if (seg[g] < lowest)
         lowest = seg[g]
-    if (drift <= -drift_pct)
-      trend = tau <= -0.6 ? "degrading" : "declined"
+    first_step = nsegments > 1 ? seg[2] - seg[1] : 0
+    last_step = nsegments > 1 ? seg[nsegments] - seg[nsegments - 1] : 0
+    if (first_step < 0)
+      first_step = -first_step
+    if (last_step < 0)
+      last_step = -last_step
+    flat_end = seg[nsegments - 1] > 0 && 100 * last_step / seg[nsegments - 1] <= drift_pct / 4
+    if (drift <= -drift_pct && tau <= -0.6)
+      trend = (flat_end && last_step < first_step / 2 &&
+               first_step * (nsegments - 1) >= first - last) ? "settling" : "degrading"
+    else if (drift <= -drift_pct)
+      trend = "declined"
     else if (drift >= drift_pct)
       trend = tau >= 0.6 ? "improving" : "rose"
     else if (first > 0 && 100 * (1 - lowest / first) >= drift_pct)
@@ -272,8 +288,9 @@ END {
     print "> - **drift** is the change of the mean TPS from the first to the last time"
     print ">   segment, and **trend** its shape: steady is good; degrading is a"
     print ">   sustained decline, or a drop not recovered from, and needs attention;"
-    print ">   dip recovered is a hiccup; declined, improving and rose are the other"
-    print ">   cases."
+    print ">   settling is a decline levelling off to a lower steady state, not"
+    print ">   bleeding; dip recovered is a hiccup; declined, improving and rose are"
+    print ">   the other cases."
   print ""
   if (nunstable == 0)
     print "No point has a CV of " cv_buckets "% or more."

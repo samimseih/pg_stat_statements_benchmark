@@ -114,8 +114,9 @@ more, because the final TPS of a point averages over phases that may differ.
 It also gives each point a trend over time, from the mean TPS of equal time
 segments (`TPS_SEGMENTS`, default 5): `degrading` is a sustained decline, or
 a drop not recovered from, of `TPS_DRIFT_PCT` percent (default 5) or more
-from the first segment to the last; `dip recovered` is a hiccup the point
-recovers from; `declined`, `improving`, `rose` and `steady` are the other
+from the first segment to the last; `settling` is such a decline levelling off
+to a lower steady state, front loaded and flat at the end, rather than
+bleeding; `dip recovered` is a hiccup the point recovers from; `declined`, `improving`, `rose` and `steady` are the other
 cases, see the script.  Points not steady get their TPS over time.
 `report_pgss_benchmark.sh` shows the stddev, CV, sample min-max and trend next
 to the TPS of each point, and includes this report.

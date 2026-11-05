@@ -792,8 +792,8 @@ END {
   print "> progress samples of each point: a CV under 2% is a steady run, high for"
   print "> both commits is noise of the machine, higher for the patched commit only"
   print "> is the patch.  The trend tells a sustained change over the run"
-  print "> (degrading needs attention) from a hiccup (dip recovered).  See TPS"
-  print "> Stability for histograms and TPS over time."
+  print "> (degrading needs attention, settling levels off) from a hiccup (dip"
+  print "> recovered).  See TPS Stability for histograms and TPS over time."
   print ""
   print_throughput(hot100)
   print_throughput(hot1500)

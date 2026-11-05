@@ -38,7 +38,8 @@ NOTE_MAIN = """\
   is the patch.  Min-max shows short stalls and bursts.
 - **TPS trend:** how TPS changes over the run, see the TPS over time table.
   Steady is good; degrading is a sustained decline, or a drop not recovered
-  from, and needs attention; dip recovered is a hiccup.
+  from, and needs attention; settling is a decline levelling off to a lower
+  steady state; dip recovered is a hiccup.
 - **Entries min/avg/max:** sampled number of pg_stat_statements entries;
   the max may slightly exceed pg_stat_statements.max with the patch.
 - **Popular kept (min):** fewest of the 4000 popular statements present in
@@ -53,6 +54,9 @@ in time order (1 minute each for 5-minute points), with their mean TPS.
 - **degrading:** the last segment is TPS_DRIFT_PCT (5%) or more below the
   first, and TPS mostly goes down along the way, which includes a drop not
   recovered from.  The serious case.
+- **settling:** degrading, but levelling off: the last segment is within
+  1.25% of the one before, and the last step is less than half the first.
+  A lower steady state, not bleeding; the gap that matters is its level.
 - **declined:** as low at the end, without a sustained decline.
 - **dip recovered:** a segment fell that much, but the last one is back
   within it of the first: a hiccup.
