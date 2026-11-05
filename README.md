@@ -46,6 +46,12 @@ of flags.  Clusters are created under `BENCH_ROOT/pgdata` and listen on
 installation, cluster or server are left alone.  Uncommitted changes are not
 benchmarked in this mode.
 
+`BUILD_MODE=prebuilt` builds nothing: each commit must already be installed in
+`PREFIX/pghome/WORKTREE_NAME-<sha>`, as `BUILD_MODE=worktree` installs commits
+with `RUN_ORDER=interleaved`, and `PG_WORKTREE` is only read for commit names.
+`BUILD_ONLY=1` stops after building and installing the commits.  The EC2 fleet
+setup uses both to build once and ship the installations.
+
 `BUILD_MODE=worktree` instead checks out each commit in `PG_WORKTREE`, which
 must be clean, and builds it in `BUILD_DIR` (default
 `$PG_WORKTREE/build-release`), installing under `PREFIX`.  The EC2 setup uses

@@ -9,8 +9,13 @@ PG_WORKTREE="${PG_WORKTREE:-$HOME/pgdev/installations/worktrees/dev}"
 # with git archive, then built and installed under BENCH_ROOT, and its cluster
 # runs there on PGPORT.  BUILD_MODE=worktree checks out each commit in
 # PG_WORKTREE and builds it in BUILD_DIR, which includes uncommitted changes
-# applied there, as the EC2 setup does.
+# applied there, as the EC2 setup does.  BUILD_MODE=prebuilt builds nothing:
+# each commit must already be installed in PREFIX/pghome/WORKTREE_NAME-<sha>,
+# as BUILD_MODE=worktree with RUN_ORDER=interleaved installs it, and
+# PG_WORKTREE is only read for commit names.  BUILD_ONLY=1 stops after
+# building and installing the commits.
 BUILD_MODE="${BUILD_MODE:-archive}"
+BUILD_ONLY="${BUILD_ONLY:-0}"
 BENCH_ROOT="${BENCH_ROOT:-/tmp/pgss_bench_suite}"
 MESON_FLAGS="${MESON_FLAGS:--Dbuildtype=release -Doptimization=2 -Ddebug=false -Db_ndebug=true -Dcassert=false -Dtap_tests=disabled -Ddocs=disabled}"
 if [[ "$BUILD_MODE" == "archive" ]]; then
@@ -271,6 +276,8 @@ build_and_start_commit() {
   if [[ "$BUILD_MODE" == "archive" ]]; then
     archive_build_commit "$commit"
     set_pg_paths "$ARCHIVE_INSTALL_NAME"
+  elif [[ "$BUILD_MODE" == "prebuilt" ]]; then
+    set_pg_paths "$(prebuilt_install_name "$commit")"
   else
     set_pg_paths "$WORKTREE_NAME"
     git -C "$PG_WORKTREE" checkout -q "$commit"
@@ -283,6 +290,16 @@ build_and_start_commit() {
   configure_cluster
 }
 
+# Install name of a commit built beforehand, failing if it is not installed
+prebuilt_install_name() {
+  local commit="$1" install_name
+
+  install_name="$WORKTREE_NAME-$(git -C "$PG_WORKTREE" rev-parse --short=12 "$commit^{commit}")"
+  [[ -x "$PGHOME_BASE/$install_name/bin/postgres" ]] ||
+    die "commit $commit is not installed in $PGHOME_BASE/$install_name"
+  echo "$install_name"
+}
+
 prepare_commit_install() {
   local commit="$1"
   local short_commit install_name
@@ -293,6 +310,8 @@ prepare_commit_install() {
   if [[ "$BUILD_MODE" == "archive" ]]; then
     archive_build_commit "$commit"
     install_name="$ARCHIVE_INSTALL_NAME"
+  elif [[ "$BUILD_MODE" == "prebuilt" ]]; then
+    install_name="$(prebuilt_install_name "$commit")"
   else
     git -C "$PG_WORKTREE" checkout -q "$commit"
     install_name="$WORKTREE_NAME-$short_commit"
@@ -305,7 +324,7 @@ prepare_commit_install() {
   git -C "$PG_WORKTREE" log -1 --oneline "$commit" >"$RESULT_ROOT/$short_commit/commit.txt"
 
   set_pg_paths "$install_name"
-  if [[ "$BUILD_MODE" != "archive" ]]; then
+  if [[ "$BUILD_MODE" == "worktree" ]]; then
     configure_build_prefix
     verify_release_build
     ninja -C "$BUILD_DIR" clean
@@ -919,7 +938,7 @@ main() {
   esac
 
   case "$BUILD_MODE" in
-    archive)
+    archive|prebuilt)
       ;;
     worktree)
       check_worktree_clean
@@ -934,6 +953,15 @@ main() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   set_pg_paths "$WORKTREE_NAME"
+
+  if [[ "$BUILD_ONLY" == "1" ]]; then
+    for commit in "${COMMITS[@]}"; do
+      prepare_commit_install "$commit"
+    done
+    echo
+    echo "Installed: ${COMMIT_INSTALL_NAME[*]}"
+    return
+  fi
 
   mkdir -p "$RESULT_ROOT"
   header=(

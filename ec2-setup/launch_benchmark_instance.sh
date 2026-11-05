@@ -66,7 +66,7 @@ JSON
     },
     {
       "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:AbortMultipartUpload"],
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"],
       "Resource": "arn:aws:s3:::$RESULT_BUCKET/$RESULT_PREFIX/*"
     }
   ]
@@ -180,6 +180,10 @@ render_user_data() {
     write_env_var PATCH_REF "$PATCH_REF"
     write_env_var PATCH_COMMIT "$PATCH_COMMIT"
     write_env_var BASE_REF "$BASE_REF"
+    write_env_var BASE_COMMIT "${BASE_COMMIT:-}"
+    write_env_var BUILD_ROLE "${BUILD_ROLE:-}"
+    write_env_var BUILD_SHIP_URI "${BUILD_SHIP_URI:-}"
+    write_env_var BUILD_WAIT_MINUTES "${BUILD_WAIT_MINUTES:-120}"
     write_env_var BENCHMARK_REPO "$BENCHMARK_REPO"
     write_env_var CLIENTS "$CLIENTS"
     write_env_var SELECT_CLIENTS "$SELECT_CLIENTS"

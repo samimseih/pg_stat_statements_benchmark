@@ -89,25 +89,63 @@ runuser -l ec2-user -c "
   git remote add samimseih '$PATCH_REMOTE'
   git fetch origin '$BASE_REF:refs/remotes/origin/$BASE_REF'
   git fetch samimseih '$PATCH_REF:refs/remotes/samimseih/$PATCH_REF'
-  meson setup build-release \
-    --prefix='$PREFIX/pghome/dev' \
-    --buildtype=release \
-    -Db_ndebug=true \
-    -Dcassert=false
+  if [[ '$BUILD_ROLE' != consumer ]]; then
+    meson setup build-release \
+      --prefix='$PREFIX/pghome/dev' \
+      --buildtype=release \
+      -Db_ndebug=true \
+      -Dcassert=false
+  fi
   cd '$WORK_ROOT'
   git clone '$BENCHMARK_REPO' pg_stat_statements_benchmark
 "
+
+COMMITS="${PATCH_COMMIT:-samimseih/$PATCH_REF} ${BASE_COMMIT:-origin/$BASE_REF}"
+SUITE_BUILD_MODE=worktree
+
+# With BUILD_ROLE=builder, build the commits once and ship them to the other
+# instances of the fleet through BUILD_SHIP_URI; with BUILD_ROLE=consumer,
+# wait for them there instead of building.
+if [[ "$BUILD_ROLE" == builder ]]; then
+  runuser -l ec2-user -c "
+    set -Eeuo pipefail
+    cd '$WORK_ROOT/pg_stat_statements_benchmark'
+    env \
+      PG_WORKTREE='$WORK_ROOT/postgres' \
+      BUILD_MODE=worktree \
+      BUILD_ONLY=1 \
+      RUN_ORDER=interleaved \
+      PREFIX='$PREFIX' \
+      WORKTREE_NAME=dev \
+      BUILD_DIR='$WORK_ROOT/postgres/build-release' \
+      COMMITS='$COMMITS' \
+      RESULT_ROOT='$RESULT_ROOT' \
+      ./run_pgss_benchmark_suite.sh
+    tar -C '$PREFIX/pghome' -czf /tmp/pgss-builds.tar.gz \$(cd '$PREFIX/pghome' && ls -d dev-*)
+  "
+  aws s3 cp /tmp/pgss-builds.tar.gz "$BUILD_SHIP_URI"
+  SUITE_BUILD_MODE=prebuilt
+elif [[ "$BUILD_ROLE" == consumer ]]; then
+  echo "waiting up to $BUILD_WAIT_MINUTES minutes for $BUILD_SHIP_URI"
+  for ((i = 0; i < BUILD_WAIT_MINUTES * 2; i++)); do
+    aws s3 cp "$BUILD_SHIP_URI" /tmp/pgss-builds.tar.gz >/dev/null 2>&1 && break
+    sleep 30
+  done
+  [[ -s /tmp/pgss-builds.tar.gz ]] || { echo "builds not shipped in time"; exit 1; }
+  runuser -l ec2-user -c "mkdir -p '$PREFIX/pghome' && tar -C '$PREFIX/pghome' -xzf /tmp/pgss-builds.tar.gz"
+  SUITE_BUILD_MODE=prebuilt
+fi
 
 runuser -l ec2-user -c "
   set -Eeuo pipefail
   cd '$WORK_ROOT/pg_stat_statements_benchmark'
   env \
     PG_WORKTREE='$WORK_ROOT/postgres' \
-    BUILD_MODE=worktree \
+    BUILD_MODE='$SUITE_BUILD_MODE' \
     PREFIX='$PREFIX' \
     WORKTREE_NAME=dev \
     BUILD_DIR='$WORK_ROOT/postgres/build-release' \
-    COMMITS='${PATCH_COMMIT:-samimseih/$PATCH_REF} origin/$BASE_REF' \
+    COMMITS='$COMMITS' \
     CLIENTS='$CLIENTS' \
     SELECT_CLIENTS='$SELECT_CLIENTS' \
     HOTCOLD_SECONDS='$HOTCOLD_SECONDS' \

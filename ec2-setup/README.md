@@ -65,6 +65,26 @@ The launch script creates, or reuses, these account resources:
 
 If the account does not have a default VPC, set `VPC_ID` and `SUBNET_ID`.
 
+## Launch A Fleet
+
+`launch_benchmark_fleet.sh` launches one instance per type in
+`INSTANCE_TYPES`, all running in parallel, and builds PostgreSQL only once:
+
+```sh
+INSTANCE_TYPES="c7i.large c7i.2xlarge c7i.24xlarge" ./launch_benchmark_fleet.sh
+```
+
+The largest instance type, by vCPUs, or `BUILDER_INSTANCE_TYPE`, builds the
+patch and base commits and uploads the installations to the fleet's prefix in
+the result bucket, then benchmarks them.  The other instances wait for the
+installations there, for at most `BUILD_WAIT_MINUTES` (default 120), instead of
+building, which is slow on small instances, and run the suite with
+`BUILD_MODE=prebuilt`.  The patch and base commits are resolved when
+launching, from `PATCH_REF` and `BASE_REF` unless `PATCH_COMMIT` and
+`BASE_COMMIT` are set, so that all instances benchmark the same commits.  Run
+ids are `<fleet id>-<instance type>`, and other settings are as for
+`launch_benchmark_instance.sh`.
+
 ## Status And Results
 
 ```sh
