@@ -119,10 +119,10 @@ def main():
     print()
 
     print("| Workload | Clients | Instance | TPS patch / base | Performance ratio "
-          "| TPS stddev p / b | TPS CV p / b | Sample TPS min-max p / b "
-          "| TPS trend p / b "
+          "| TPS stddev patch / base | TPS CV patch / base | Sample TPS min-max patch / base "
+          "| TPS trend patch / base "
           "| Entries min/avg/max, patch | Entries min/avg/max, base "
-          "| Popular kept (min) p / b | Text file max MB p / b | Failed p / b |")
+          "| Popular kept (min) patch / base | Text file max MB patch / base | Failed patch / base |")
     print("|---" * 14 + "|")
     for _, line in sorted(rows):
         print(line)
