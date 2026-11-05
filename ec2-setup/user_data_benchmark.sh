@@ -103,6 +103,7 @@ runuser -l ec2-user -c "
   cd '$WORK_ROOT/pg_stat_statements_benchmark'
   env \
     PG_WORKTREE='$WORK_ROOT/postgres' \
+    BUILD_MODE=worktree \
     PREFIX='$PREFIX' \
     WORKTREE_NAME=dev \
     BUILD_DIR='$WORK_ROOT/postgres/build-release' \

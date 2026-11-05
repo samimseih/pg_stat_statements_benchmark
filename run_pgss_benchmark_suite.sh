@@ -4,12 +4,27 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PG_WORKTREE="${PG_WORKTREE:-$HOME/pgdev/installations/worktrees/dev}"
-PREFIX="${PREFIX:-$HOME/pgdev/installations}"
+
+# BUILD_MODE=archive (default) only reads PG_WORKTREE: each commit is exported
+# with git archive, then built and installed under BENCH_ROOT, and its cluster
+# runs there on PGPORT.  BUILD_MODE=worktree checks out each commit in
+# PG_WORKTREE and builds it in BUILD_DIR, which includes uncommitted changes
+# applied there, as the EC2 setup does.
+BUILD_MODE="${BUILD_MODE:-archive}"
+BENCH_ROOT="${BENCH_ROOT:-/tmp/pgss_bench_suite}"
+MESON_FLAGS="${MESON_FLAGS:--Dbuildtype=release -Doptimization=2 -Ddebug=false -Db_ndebug=true -Dcassert=false -Dtap_tests=disabled -Ddocs=disabled}"
+if [[ "$BUILD_MODE" == "archive" ]]; then
+  PREFIX="${PREFIX:-$BENCH_ROOT}"
+else
+  PREFIX="${PREFIX:-$HOME/pgdev/installations}"
+fi
 WORKTREE_NAME="${WORKTREE_NAME:-dev}"
 BUILD_DIR="${BUILD_DIR:-$PG_WORKTREE/build-release}"
 
 PGHOST="${PGHOST:-localhost}"
-PGPORT="${PGPORT:-5432}"
+# Not PGPORT, which a dev environment usually exports for its own server
+BENCH_PGPORT="${BENCH_PGPORT:-55433}"
+PGPORT="$BENCH_PGPORT"
 PGUSER="${PGUSER:-postgres}"
 PGDATABASE="${PGDATABASE:-postgres}"
 
@@ -17,6 +32,9 @@ COMMITS=(${COMMITS:-fbef23389f1 3051c223a60})
 CLIENTS=(${CLIENTS:-1 2 4 8 16 32 64 128 256})
 SELECT_CLIENTS=(${SELECT_CLIENTS:-${CLIENTS[*]}})
 MAX_THREADS="${MAX_THREADS:-32}"
+CPU_LIMIT="${CPU_LIMIT:-0}"
+CPU_SET="${CPU_SET:-}"
+CPU_SCRIPT="${CPU_SCRIPT:-$SCRIPT_DIR/set_cpus.sh}"
 PROGRESS_SECONDS="${PROGRESS_SECONDS:-10}"
 PGSS_SAMPLE_SECONDS="${PGSS_SAMPLE_SECONDS:-5}"
 PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
@@ -81,6 +99,52 @@ checkout_original_on_exit() {
   if [[ -n "$original_ref" && "${RESTORE_GIT:-1}" == "1" ]]; then
     git -C "$PG_WORKTREE" checkout -q "$original_ref" || true
   fi
+}
+
+# CPU_LIMIT=N keeps CPUs 0..N-1 online while measuring, and CPU_SET=LIST the
+# CPUs of LIST (e.g. 0-3,16-19).  Builds run with all CPUs, and all CPUs are
+# restored when the script exits for any reason.
+cpu_limited=0
+
+cpu_limit_apply() {
+  local spec online expected
+
+  if [[ -n "$CPU_SET" ]]; then
+    (( CPU_LIMIT == 0 )) || die "set only one of CPU_LIMIT and CPU_SET"
+    spec="$CPU_SET"
+  elif (( CPU_LIMIT > 0 )); then
+    spec="$CPU_LIMIT"
+  else
+    return 0
+  fi
+  [[ -x "$CPU_SCRIPT" ]] || die "CPU_SCRIPT $CPU_SCRIPT is not executable"
+
+  cpu_limited=1
+  "$CPU_SCRIPT" "$spec" >/dev/null || die "could not set online CPUs to $spec"
+  online="$("$CPU_SCRIPT" --expand "$(cat /sys/devices/system/cpu/online)" | tr '\n' ' ')"
+  expected="$("$CPU_SCRIPT" --expand "$spec" | tr '\n' ' ')"
+  [[ "$online" == "$expected" ]] ||
+    die "expected online CPUs $spec, found $(cat /sys/devices/system/cpu/online)"
+  echo "==> Measuring with online CPUs $(cat /sys/devices/system/cpu/online)"
+}
+
+cpu_limit_restore() {
+  (( cpu_limited )) || return 0
+
+  if ! "$CPU_SCRIPT" >/dev/null; then
+    echo "error: could not restore online CPUs; run $CPU_SCRIPT" >&2
+    return 1
+  fi
+  cpu_limited=0
+  echo "==> Restored online CPUs ($(cat /sys/devices/system/cpu/online))"
+}
+
+cleanup_on_exit() {
+  local status=$?
+
+  cpu_limit_restore || status=1
+  checkout_original_on_exit
+  exit "$status"
 }
 
 check_worktree_clean() {
@@ -156,7 +220,39 @@ recreate_cluster() {
   "$PGHOME/bin/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
   rm -rf -- "$PGDATA"
   "$PGHOME/bin/initdb" -D "$PGDATA" -U "$PGUSER" --data-checksums
+  echo "port = $PGPORT" >>"$PGDATA/postgresql.conf"
   "$PGHOME/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/logfile" -w start
+}
+
+# Build a commit from a git archive export into BENCH_ROOT, once per commit
+# and set of build flags.  Sets BUILD_DIR, and the install name for
+# set_pg_paths().
+archive_build_commit() {
+  local commit="$1" sha key dir cc="cc"
+
+  sha="$(git -C "$PG_WORKTREE" rev-parse --verify "$commit^{commit}")"
+  key="$(printf '%s %s' "$sha" "$MESON_FLAGS" | sha1sum | cut -c1-12)"
+  dir="$BENCH_ROOT/pghome/${sha:0:12}-$key"
+  BUILD_DIR="$dir/build"
+  ARCHIVE_INSTALL_NAME="${sha:0:12}-$key/install"
+
+  if [[ -f "$dir/.complete" ]]; then
+    echo "Using cached build $dir"
+    return
+  fi
+
+  command -v ccache >/dev/null && cc="ccache cc"
+  rm -rf -- "$dir"
+  mkdir -p "$dir/src"
+  git -C "$PG_WORKTREE" archive "$sha" | tar -x -C "$dir/src"
+  # shellcheck disable=SC2086
+  CC="$cc" meson setup "$BUILD_DIR" "$dir/src" --prefix="$dir/install" \
+    $MESON_FLAGS >"$dir/setup.log" 2>&1 ||
+    { tail -n 30 "$dir/setup.log"; die "meson setup failed for $commit"; }
+  verify_release_build
+  ninja -C "$BUILD_DIR" install >"$dir/build.log" 2>&1 ||
+    { grep -E 'error|FAILED' "$dir/build.log" | head -n 30; die "build failed for $commit"; }
+  touch "$dir/.complete"
 }
 
 capture_commit_settings() {
@@ -169,14 +265,20 @@ capture_commit_settings() {
 build_and_start_commit() {
   local commit="$1"
 
-  set_pg_paths "$WORKTREE_NAME"
+  cpu_limit_restore || die "could not restore online CPUs before building"
   echo
   echo "==> Building $commit"
-  git -C "$PG_WORKTREE" checkout -q "$commit"
-  configure_build_prefix
-  verify_release_build
-  ninja -C "$BUILD_DIR" clean
-  ninja -C "$BUILD_DIR" install
+  if [[ "$BUILD_MODE" == "archive" ]]; then
+    archive_build_commit "$commit"
+    set_pg_paths "$ARCHIVE_INSTALL_NAME"
+  else
+    set_pg_paths "$WORKTREE_NAME"
+    git -C "$PG_WORKTREE" checkout -q "$commit"
+    configure_build_prefix
+    verify_release_build
+    ninja -C "$BUILD_DIR" clean
+    ninja -C "$BUILD_DIR" install
+  fi
   recreate_cluster
   configure_cluster
 }
@@ -187,21 +289,28 @@ prepare_commit_install() {
 
   echo
   echo "==> Building $commit"
-  git -C "$PG_WORKTREE" checkout -q "$commit"
-  short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
-  install_name="$WORKTREE_NAME-$short_commit"
+  short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 "$commit^{commit}")"
+  if [[ "$BUILD_MODE" == "archive" ]]; then
+    archive_build_commit "$commit"
+    install_name="$ARCHIVE_INSTALL_NAME"
+  else
+    git -C "$PG_WORKTREE" checkout -q "$commit"
+    install_name="$WORKTREE_NAME-$short_commit"
+  fi
 
   COMMIT_SHORT_NAME["$commit"]="$short_commit"
   COMMIT_INSTALL_NAME["$commit"]="$install_name"
 
   mkdir -p "$RESULT_ROOT/$short_commit"
-  git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
+  git -C "$PG_WORKTREE" log -1 --oneline "$commit" >"$RESULT_ROOT/$short_commit/commit.txt"
 
   set_pg_paths "$install_name"
-  configure_build_prefix
-  verify_release_build
-  ninja -C "$BUILD_DIR" clean
-  ninja -C "$BUILD_DIR" install
+  if [[ "$BUILD_MODE" != "archive" ]]; then
+    configure_build_prefix
+    verify_release_build
+    ninja -C "$BUILD_DIR" clean
+    ninja -C "$BUILD_DIR" install
+  fi
 }
 
 start_prepared_commit() {
@@ -761,6 +870,7 @@ run_interleaved() {
   for commit in "${COMMITS[@]}"; do
     prepare_commit_install "$commit"
   done
+  cpu_limit_apply
 
   if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
     run_interleaved_hotcold_ladder hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql"
@@ -778,10 +888,11 @@ run_commit_major() {
 
   for commit in "${COMMITS[@]}"; do
     build_and_start_commit "$commit"
-    short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
+    short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 "$commit^{commit}")"
     mkdir -p "$RESULT_ROOT/$short_commit"
-    git -C "$PG_WORKTREE" log -1 --oneline >"$RESULT_ROOT/$short_commit/commit.txt"
+    git -C "$PG_WORKTREE" log -1 --oneline "$commit" >"$RESULT_ROOT/$short_commit/commit.txt"
     capture_commit_settings "$short_commit"
+    cpu_limit_apply
 
     if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
       run_hotcold_ladder "$short_commit" hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql"
@@ -807,9 +918,21 @@ main() {
       ;;
   esac
 
-  check_worktree_clean
-  original_ref="$(git -C "$PG_WORKTREE" symbolic-ref --short -q HEAD || git -C "$PG_WORKTREE" rev-parse HEAD)"
-  trap checkout_original_on_exit EXIT
+  case "$BUILD_MODE" in
+    archive)
+      ;;
+    worktree)
+      check_worktree_clean
+      original_ref="$(git -C "$PG_WORKTREE" symbolic-ref --short -q HEAD || git -C "$PG_WORKTREE" rev-parse HEAD)"
+      ;;
+    *)
+      die "unsupported BUILD_MODE: $BUILD_MODE"
+      ;;
+  esac
+  trap cleanup_on_exit EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   set_pg_paths "$WORKTREE_NAME"
 
   mkdir -p "$RESULT_ROOT"

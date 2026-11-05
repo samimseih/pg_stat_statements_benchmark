@@ -37,16 +37,22 @@ units.
 
 ## Requirements
 
-The runner uses PostgreSQL's Meson/Ninja build.  By default it expects the
-worktree to have a release build directory at:
+The runner uses PostgreSQL's Meson/Ninja build.  By default
+(`BUILD_MODE=archive`) it only reads `PG_WORKTREE`: each commit is exported
+with `git archive`, built with `MESON_FLAGS` and installed under
+`BENCH_ROOT/pghome` (default `/tmp/pgss_bench_suite`), once per commit and set
+of flags.  Clusters are created under `BENCH_ROOT/pgdata` and listen on
+`BENCH_PGPORT` (default 55433; an exported `PGPORT` is ignored), so the worktree, its build directories, and any dev
+installation, cluster or server are left alone.  Uncommitted changes are not
+benchmarked in this mode.
 
-```sh
-$PG_WORKTREE/build-release
-```
+`BUILD_MODE=worktree` instead checks out each commit in `PG_WORKTREE`, which
+must be clean, and builds it in `BUILD_DIR` (default
+`$PG_WORKTREE/build-release`), installing under `PREFIX`.  The EC2 setup uses
+this mode, so that a patch applied to the remote worktree is included.
 
-The build directory can be changed with `BUILD_DIR`.  Before each commit is
-installed, the runner checks the Meson configuration and refuses to continue if
-the build is not suitable for perf testing:
+Before each commit is installed, the runner checks the Meson configuration and
+refuses to continue if the build is not suitable for perf testing:
 
 ```text
 debug=false
@@ -55,8 +61,8 @@ b_ndebug=true
 cassert=false
 ```
 
-The runner recreates the local data directory itself after each install.  It
-does not use the `~/build` helper.
+The runner recreates the data directory itself after each install.  It does
+not use the `~/build` helper.
 
 ## Workloads
 
@@ -155,32 +161,41 @@ RUN_ORDER=interleaved ./run_pgss_benchmark_suite.sh
 PGSS_SAMPLE_SECONDS=5 ./run_pgss_benchmark_suite.sh
 PGSS_QUERY_TEXT_MEMORY=1GB ./run_pgss_benchmark_suite.sh
 RESULT_ROOT=/tmp/pgss_results ./run_pgss_benchmark_suite.sh
+CPU_LIMIT=2 ./run_pgss_benchmark_suite.sh
+CPU_SET=0-3,16-19 ./run_pgss_benchmark_suite.sh
 ```
+
+`CPU_LIMIT=N` keeps only CPUs `0..N-1` online while measuring, and
+`CPU_SET=LIST` the CPUs of a list such as `0-3,16-19`, for example to avoid SMT
+siblings; set at most one.  This uses `set_cpus.sh`, which needs root or
+passwordless sudo.  Builds run with all CPUs, the suite fails if the online CPUs
+do not match, and all CPUs are restored when it exits, including on errors and
+interrupts.  By default CPUs are left alone.
 
 By default, `RUN_ORDER=commit_major` builds one commit and runs all selected
 points for it before moving to the next commit.  `RUN_ORDER=interleaved` builds
 each commit once into a commit-specific install prefix, then alternates commits
 per client point with a fresh `initdb` for each point.
 
-Defaults assume this local layout:
+Defaults:
 
 ```sh
 PG_WORKTREE=$HOME/pgdev/installations/worktrees/dev
-PREFIX=$HOME/pgdev/installations
+BUILD_MODE=archive
+BENCH_ROOT=/tmp/pgss_bench_suite
+PREFIX=$BENCH_ROOT              # $HOME/pgdev/installations with BUILD_MODE=worktree
 WORKTREE_NAME=dev
-BUILD_DIR=$PG_WORKTREE/build-release
-PGPORT=5432
+BENCH_PGPORT=55433
 PGUSER=postgres
 PGDATABASE=postgres
 ```
 
-The build/reset recipe per commit is:
+The build/reset recipe per commit is, with `BUILD_MODE=archive`:
 
 ```sh
-git checkout <commit>
-meson configure "$BUILD_DIR"   # verify release/perf settings
-ninja -C "$BUILD_DIR" clean
-ninja -C "$BUILD_DIR" install
+git -C "$PG_WORKTREE" archive <commit> | tar -x -C <src>
+meson setup <build> <src> --prefix=<install> $MESON_FLAGS
+ninja -C <build> install
 rm -rf "$PGDATA"
 initdb -D "$PGDATA" -U "$PGUSER" --data-checksums
 pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" -w start
