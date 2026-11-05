@@ -9,8 +9,13 @@
 # instead of building, which is slow on small instances.  Both commits are
 # resolved here, so that all instances benchmark exactly the same commits.
 #
+# With REUSE_FLEET_ID, the instances of that earlier fleet run the benchmark,
+# started if they are stopped, instead of new instances.  They keep the setup
+# and the builds of their earlier runs.
+#
 # Usage:
 #   INSTANCE_TYPES="c7i.large c7i.24xlarge" ./launch_benchmark_fleet.sh
+#   REUSE_FLEET_ID=pgss-fleet-... INSTANCE_TYPES="..." ./launch_benchmark_fleet.sh
 #
 # All other settings are the ones of launch_benchmark_instance.sh.
 set -Eeuo pipefail
@@ -47,6 +52,26 @@ fi
 [[ " ${types[*]} " == *" $BUILDER_INSTANCE_TYPE "* ]] ||
   die "builder instance type $BUILDER_INSTANCE_TYPE is not in INSTANCE_TYPES"
 
+# The instance of type $1 of fleet REUSE_FLEET_ID.
+reused_instance() {
+  local type="$1" instance_id
+
+  instance_id="$(aws_cmd ec2 describe-instances \
+    --filters "Name=tag:RunId,Values=$REUSE_FLEET_ID-${type//./-}" \
+      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+  [[ -n "$instance_id" && "$instance_id" != None ]] ||
+    die "no $type instance in fleet $REUSE_FLEET_ID"
+  echo "$instance_id"
+}
+
+declare -A reuse_ids
+if [[ -n "${REUSE_FLEET_ID:-}" ]]; then
+  for type in "${types[@]}"; do
+    reuse_ids[$type]="$(reused_instance "$type")"
+  done
+fi
+
 BUILD_SHIP_URI="s3://$RESULT_BUCKET/$RESULT_PREFIX/$FLEET_ID/builds.tar.gz"
 
 cat <<EOF
@@ -55,6 +80,7 @@ Patch commit: $PATCH_COMMIT
 Base commit: $BASE_COMMIT
 Builder: $BUILDER_INSTANCE_TYPE
 Builds: $BUILD_SHIP_URI
+Reusing: ${REUSE_FLEET_ID:-no}
 EOF
 
 for type in "${types[@]}"; do
@@ -62,8 +88,9 @@ for type in "${types[@]}"; do
   [[ "$type" == "$BUILDER_INSTANCE_TYPE" ]] && role=builder
 
   echo
-  echo "==> Launching $type ($role)"
+  echo "==> Starting $type ($role) ${reuse_ids[$type]:-}"
   env \
+    REUSE_INSTANCE_ID="${reuse_ids[$type]:-}" \
     RUN_ID="$FLEET_ID-${type//./-}" \
     INSTANCE_TYPE="$type" \
     BUILD_ROLE="$role" \

@@ -188,7 +188,9 @@ By default, `RUN_ORDER=commit_major` builds one commit and runs all selected
 points for it before moving to the next commit.  `RUN_ORDER=interleaved` builds
 each commit once into a commit-specific install prefix, then runs the workloads
 back to back for each number of clients, alternating commits for each point,
-with a fresh `initdb` for each point.
+with a fresh `initdb` for each point.  The numbers of clients run in ascending
+order, or with `CLIENT_ORDER=outside_in` alternate the smallest and largest
+left (1, 512, 2, 256, ...), so that both ends of the range have results early.
 
 Defaults:
 

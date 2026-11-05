@@ -56,6 +56,8 @@ AUTO_TERMINATE=0 ./launch_benchmark_instance.sh
 `RUN_ORDER=interleaved` builds each tested commit once into its own install
 prefix, then runs the workloads back to back for each number of clients,
 alternating patch/baseline per point with a fresh `initdb` for each point.
+The EC2 setup defaults to `CLIENT_ORDER=outside_in`, which alternates the
+smallest and largest numbers of clients left.
 
 The launch script creates, or reuses, these account resources:
 
@@ -84,6 +86,24 @@ launching, from `PATCH_REF` and `BASE_REF` unless `PATCH_COMMIT` and
 `BASE_COMMIT` are set, so that all instances benchmark the same commits.  Run
 ids are `<fleet id>-<instance type>`, and other settings are as for
 `launch_benchmark_instance.sh`.
+
+## Reuse Instances
+
+Instances stop when their benchmark is done, see below, and can run later
+benchmarks, which skips their setup and, if the commits are unchanged, the
+build:
+
+```sh
+REUSE_FLEET_ID=pgss-fleet-20261105T160600Z INSTANCE_TYPES="c7i.large c7i.48xlarge" \
+  ./launch_benchmark_fleet.sh
+REUSE_INSTANCE_ID=i-0123456789abcdef0 ./launch_benchmark_instance.sh
+```
+
+With `REUSE_FLEET_ID`, each instance type uses the instance of that fleet,
+started if stopped, and gets the run id of the new fleet, which a later run
+reuses in turn.  The bootstrap runs again with the new settings and the latest
+benchmark repository, through SSM.  An instance still running a benchmark is
+refused.
 
 ## Status And Results
 
@@ -184,13 +204,18 @@ raw Session Manager user instead:
 CONNECT_USER=ssm-user ./connect_instance.sh
 ```
 
-## Terminate
+## Stop Or Terminate
 
-The instance is launched with instance-initiated shutdown behavior set to
-terminate.  On a successful upload, `AUTO_TERMINATE=1` shuts the instance down.
+When its benchmark is done and uploaded, an instance shuts down to
+`AUTO_SHUTDOWN`: `stop` (default), to reuse it later, `terminate`, or `none`
+to keep it running.  `AUTO_TERMINATE=1` is the same as
+`AUTO_SHUTDOWN=terminate`.  A failed run stays up for inspection, unless
+`SHUTDOWN_ON_FAILURE=1`.  The instance-initiated shutdown behavior of the
+instance is set accordingly, also when it is reused.
 
-Manual termination:
+Manually:
 
 ```sh
+./stop_instance.sh
 ./terminate_instance.sh
 ```

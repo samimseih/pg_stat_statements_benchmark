@@ -19,6 +19,12 @@ load_config() {
   . "$SCRIPT_DIR/benchmark.config"
   set +a
 
+  [[ "${AUTO_TERMINATE:-0}" == "1" ]] && AUTO_SHUTDOWN=terminate
+  case "${AUTO_SHUTDOWN:-}" in
+    stop|terminate|none) ;;
+    *) die "AUTO_SHUTDOWN must be stop, terminate or none" ;;
+  esac
+
   [[ -n "${AWS_ACCOUNT_ID:-}" ]] || die "AWS_ACCOUNT_ID is not set"
   [[ -n "${AWS_REGION:-}" ]] || die "AWS_REGION is not set"
   mkdir -p "$STATE_DIR"
@@ -32,6 +38,15 @@ aws_cmd() {
   fi
 
   aws "${args[@]}" "$@"
+}
+
+# The instance-initiated shutdown behavior matching AUTO_SHUTDOWN.
+shutdown_behavior() {
+  if [[ "$AUTO_SHUTDOWN" == terminate ]]; then
+    echo terminate
+  else
+    echo stop
+  fi
 }
 
 check_aws_identity() {

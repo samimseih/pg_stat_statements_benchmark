@@ -26,12 +26,12 @@ finish() {
     aws s3 cp "/tmp/pgss-upload/${RUN_ID}.cloud-init.log" "$RESULT_S3_URI/${RUN_ID}.cloud-init.log" || true
   fi
 
-  if [[ "${AUTO_TERMINATE:-0}" == "1" ]]; then
+  if [[ "${AUTO_SHUTDOWN:-none}" != none ]]; then
     if [[ "$status" == "0" && "$uploaded" == "1" ]]; then
-      echo "profile succeeded and uploaded; shutting down for termination"
+      echo "profile succeeded and uploaded; shutting down to $AUTO_SHUTDOWN"
       shutdown -h now
-    elif [[ "${TERMINATE_ON_FAILURE:-0}" == "1" ]]; then
-      echo "profile failed but TERMINATE_ON_FAILURE=1; shutting down for termination"
+    elif [[ "${SHUTDOWN_ON_FAILURE:-0}" == "1" ]]; then
+      echo "profile failed but SHUTDOWN_ON_FAILURE=1; shutting down to $AUTO_SHUTDOWN"
       shutdown -h now
     else
       echo "leaving instance running for inspection"

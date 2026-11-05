@@ -47,6 +47,7 @@ RUN_HOTCOLD_4000_100M="${RUN_HOTCOLD_4000_100M:-1}"
 RUN_HOTCOLD_4000_1500="${RUN_HOTCOLD_4000_1500:-1}"
 RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
 RUN_ORDER="${RUN_ORDER:-commit_major}"
+CLIENT_ORDER="${CLIENT_ORDER:-ascending}"
 
 HOTCOLD_SECONDS="${HOTCOLD_SECONDS:-300}"
 SELECT_SECONDS="${SELECT_SECONDS:-300}"
@@ -896,6 +897,24 @@ run_interleaved_select_only_point() {
   done
 }
 
+# The numbers of clients of all workloads, ascending, or with
+# CLIENT_ORDER=outside_in alternating the smallest and the largest left, so
+# that both ends of the range have results early.
+interleaved_clients() {
+  local -a sorted
+  local lo hi
+
+  mapfile -t sorted < <(printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu)
+  if [[ "$CLIENT_ORDER" != outside_in ]]; then
+    printf '%s\n' "${sorted[@]}"
+    return
+  fi
+  for ((lo = 0, hi = ${#sorted[@]} - 1; lo <= hi; lo++, hi--)); do
+    echo "${sorted[$lo]}"
+    ((lo < hi)) && echo "${sorted[$hi]}"
+  done
+}
+
 # Run the workloads back to back for each number of clients, alternating the
 # commits for each point, so that every workload has results early.
 run_interleaved() {
@@ -906,7 +925,7 @@ run_interleaved() {
   done
   cpu_limit_apply
 
-  for clients in $(printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu); do
+  for clients in $(interleaved_clients); do
     if [[ " ${CLIENTS[*]} " == *" $clients "* ]]; then
       if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
         run_interleaved_hotcold_point hotcold_4000_100m \
@@ -949,6 +968,14 @@ run_commit_major() {
 main() {
   local -a header
   local i
+
+  case "$CLIENT_ORDER" in
+    ascending|outside_in)
+      ;;
+    *)
+      die "CLIENT_ORDER must be ascending or outside_in"
+      ;;
+  esac
 
   case "$RUN_ORDER" in
     commit_major|interleaved)

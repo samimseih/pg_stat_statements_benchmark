@@ -26,12 +26,12 @@ finish() {
     aws s3 cp "/tmp/pgss-upload/${RUN_ID}.cloud-init.log" "$RESULT_S3_URI/${RUN_ID}.cloud-init.log" || true
   fi
 
-  if [[ "${AUTO_TERMINATE:-0}" == "1" ]]; then
+  if [[ "${AUTO_SHUTDOWN:-none}" != none ]]; then
     if [[ "$status" == "0" && "$uploaded" == "1" ]]; then
-      echo "benchmark succeeded and uploaded; shutting down for termination"
+      echo "benchmark succeeded and uploaded; shutting down to $AUTO_SHUTDOWN"
       shutdown -h now
-    elif [[ "${TERMINATE_ON_FAILURE:-0}" == "1" ]]; then
-      echo "benchmark failed but TERMINATE_ON_FAILURE=1; shutting down for termination"
+    elif [[ "${SHUTDOWN_ON_FAILURE:-0}" == "1" ]]; then
+      echo "benchmark failed but SHUTDOWN_ON_FAILURE=1; shutting down to $AUTO_SHUTDOWN"
       shutdown -h now
     else
       echo "leaving instance running for inspection"
@@ -51,6 +51,11 @@ set -a
 . /etc/pgss-benchmark.env
 set +a
 
+# A reused instance, see REUSE_INSTANCE_ID, was set up by its first run.
+SETUP_DONE=/var/lib/pgss-benchmark-setup-done
+if [[ -e "$SETUP_DONE" ]]; then
+  echo "reusing instance set up at $(cat "$SETUP_DONE")"
+else
 dnf -y update
 dnf -y install \
   bison \
@@ -78,18 +83,30 @@ dnf -y install \
   util-linux \
   which \
   zlib-devel
+fi
 
 runuser -l ec2-user -c "mkdir -p '$WORK_ROOT' '$PREFIX'"
+
+# Stop a server left by an interrupted run.
+for pid_file in "$PREFIX"/pgdata/*/postmaster.pid; do
+  [[ -e "$pid_file" ]] || continue
+  pgdata="$(dirname "$pid_file")"
+  for pg_ctl in "$PREFIX"/pghome/*/bin/pg_ctl; do
+    runuser -l ec2-user -c "'$pg_ctl' -D '$pgdata' stop -m fast" && break
+  done
+done
 
 runuser -l ec2-user -c "
   set -Eeuo pipefail
   cd '$WORK_ROOT'
-  git clone '$PG_REMOTE' postgres
+  if [[ ! -d postgres ]]; then
+    git clone '$PG_REMOTE' postgres
+    git -C postgres remote add samimseih '$PATCH_REMOTE'
+  fi
   cd postgres
-  git remote add samimseih '$PATCH_REMOTE'
-  git fetch origin '$BASE_REF:refs/remotes/origin/$BASE_REF'
-  git fetch samimseih '$PATCH_REF:refs/remotes/samimseih/$PATCH_REF'
-  if [[ '$BUILD_ROLE' != consumer ]]; then
+  git fetch origin '+$BASE_REF:refs/remotes/origin/$BASE_REF'
+  git fetch samimseih '+$PATCH_REF:refs/remotes/samimseih/$PATCH_REF'
+  if [[ '$BUILD_ROLE' != consumer && ! -d build-release ]]; then
     meson setup build-release \
       --prefix='$PREFIX/pghome/dev' \
       --buildtype=release \
@@ -97,16 +114,38 @@ runuser -l ec2-user -c "
       -Dcassert=false
   fi
   cd '$WORK_ROOT'
-  git clone '$BENCHMARK_REPO' pg_stat_statements_benchmark
+  if [[ -d pg_stat_statements_benchmark ]]; then
+    git -C pg_stat_statements_benchmark fetch origin
+    git -C pg_stat_statements_benchmark reset --hard origin/HEAD
+  else
+    git clone '$BENCHMARK_REPO' pg_stat_statements_benchmark
+  fi
 "
+date -u +%Y-%m-%dT%H:%M:%SZ >"$SETUP_DONE"
 
 COMMITS="${PATCH_COMMIT:-samimseih/$PATCH_REF} ${BASE_COMMIT:-origin/$BASE_REF}"
 SUITE_BUILD_MODE=worktree
 
+# Whether all commits are installed already, by an earlier run.
+commits_installed() {
+  local commit short
+
+  for commit in $COMMITS; do
+    short="$(runuser -l ec2-user -c "git -C '$WORK_ROOT/postgres' rev-parse --short=12 '$commit^{commit}'")" ||
+      return 1
+    [[ -x "$PREFIX/pghome/dev-$short/bin/postgres" ]] || return 1
+  done
+}
+
 # With BUILD_ROLE=builder, build the commits once and ship them to the other
 # instances of the fleet through BUILD_SHIP_URI; with BUILD_ROLE=consumer,
 # wait for them there instead of building.
-if [[ "$BUILD_ROLE" == builder ]]; then
+if [[ "$BUILD_ROLE" == builder ]] && commits_installed; then
+  echo "commits already installed; shipping them without building"
+  runuser -l ec2-user -c "tar -C '$PREFIX/pghome' -czf /tmp/pgss-builds.tar.gz \$(cd '$PREFIX/pghome' && ls -d dev-*)"
+  aws s3 cp /tmp/pgss-builds.tar.gz "$BUILD_SHIP_URI"
+  SUITE_BUILD_MODE=prebuilt
+elif [[ "$BUILD_ROLE" == builder ]]; then
   runuser -l ec2-user -c "
     set -Eeuo pipefail
     cd '$WORK_ROOT/pg_stat_statements_benchmark'
@@ -124,6 +163,9 @@ if [[ "$BUILD_ROLE" == builder ]]; then
     tar -C '$PREFIX/pghome' -czf /tmp/pgss-builds.tar.gz \$(cd '$PREFIX/pghome' && ls -d dev-*)
   "
   aws s3 cp /tmp/pgss-builds.tar.gz "$BUILD_SHIP_URI"
+  SUITE_BUILD_MODE=prebuilt
+elif [[ "$BUILD_ROLE" == consumer ]] && commits_installed; then
+  echo "commits already installed"
   SUITE_BUILD_MODE=prebuilt
 elif [[ "$BUILD_ROLE" == consumer ]]; then
   echo "waiting up to $BUILD_WAIT_MINUTES minutes for $BUILD_SHIP_URI"
@@ -154,6 +196,7 @@ runuser -l ec2-user -c "
     RUN_HOTCOLD_4000_1500='$RUN_HOTCOLD_4000_1500' \
     RUN_SELECT_ONLY='$RUN_SELECT_ONLY' \
     RUN_ORDER='$RUN_ORDER' \
+    CLIENT_ORDER='$CLIENT_ORDER' \
     PGSS_SAMPLE_SECONDS='$PGSS_SAMPLE_SECONDS' \
     PGSS_SAMPLE_START_DELAY_SECONDS='$PGSS_SAMPLE_START_DELAY_SECONDS' \
     PROGRESS_SECONDS='$PROGRESS_SECONDS' \

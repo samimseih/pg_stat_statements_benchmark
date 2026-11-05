@@ -173,8 +173,8 @@ render_user_data() {
     write_env_var PREFIX /home/ec2-user/pgdev/installations
     write_env_var RESULT_ROOT "/home/ec2-user/pgss-benchmark/results/$run_id"
     write_env_var RESULT_S3_URI "$result_s3_uri"
-    write_env_var AUTO_TERMINATE "$AUTO_TERMINATE"
-    write_env_var TERMINATE_ON_FAILURE "$TERMINATE_ON_FAILURE"
+    write_env_var AUTO_SHUTDOWN "$AUTO_SHUTDOWN"
+    write_env_var SHUTDOWN_ON_FAILURE "$SHUTDOWN_ON_FAILURE"
     write_env_var PG_REMOTE "$PG_REMOTE"
     write_env_var PATCH_REMOTE "$PATCH_REMOTE"
     write_env_var PATCH_REF "$PATCH_REF"
@@ -193,6 +193,7 @@ render_user_data() {
     write_env_var RUN_HOTCOLD_4000_1500 "$RUN_HOTCOLD_4000_1500"
     write_env_var RUN_SELECT_ONLY "$RUN_SELECT_ONLY"
     write_env_var RUN_ORDER "$RUN_ORDER"
+    write_env_var CLIENT_ORDER "$CLIENT_ORDER"
     write_env_var PGSS_SAMPLE_SECONDS "$PGSS_SAMPLE_SECONDS"
     write_env_var PGSS_SAMPLE_START_DELAY_SECONDS "$PGSS_SAMPLE_START_DELAY_SECONDS"
     write_env_var PROGRESS_SECONDS "$PROGRESS_SECONDS"
@@ -214,6 +215,82 @@ render_user_data() {
   }" "$user_data_template" >"$user_data"
 
   echo "$user_data"
+}
+
+wait_ssm_online() {
+  local instance_id="$1" i ping
+
+  for ((i = 0; i < 60; i++)); do
+    ping="$(aws_cmd ssm describe-instance-information \
+      --filters "Key=InstanceIds,Values=$instance_id" \
+      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)"
+    [[ "$ping" == Online ]] && return
+    sleep 10
+  done
+  die "$instance_id is not online in SSM"
+}
+
+# Run a shell command on an instance with SSM, and print its output.
+ssm_run() {
+  local instance_id="$1" command="$2" command_id params
+
+  params="$(python3 -c 'import json, sys; print(json.dumps({"commands": [sys.argv[1]]}))' "$command")"
+  command_id="$(aws_cmd ssm send-command \
+    --instance-ids "$instance_id" \
+    --document-name AWS-RunShellScript \
+    --parameters "$params" \
+    --query Command.CommandId --output text)"
+  aws_cmd ssm wait command-executed --command-id "$command_id" --instance-id "$instance_id" || true
+  aws_cmd ssm get-command-invocation --command-id "$command_id" --instance-id "$instance_id" \
+    --query '[Status, StandardOutputContent, StandardErrorContent]' --output text
+}
+
+# Run the benchmark of run_id on an existing instance, started if stopped,
+# instead of launching one.  The bootstrap skips the setup done by an
+# earlier run, and the builds installed by it.
+reuse_instance() {
+  local instance_id="$1" run_id="$2" result_s3_uri="$3" user_data="$4"
+  local state type output volumes
+
+  read -r state type < <(aws_cmd ec2 describe-instances --instance-ids "$instance_id" \
+    --query 'Reservations[0].Instances[0].[State.Name, InstanceType]' --output text)
+  [[ -z "${INSTANCE_TYPE:-}" || "$type" == "$INSTANCE_TYPE" ]] ||
+    die "$instance_id is a $type, not a $INSTANCE_TYPE"
+
+  if [[ "$state" == stopping ]]; then
+    aws_cmd ec2 wait instance-stopped --instance-ids "$instance_id"
+    state=stopped
+  fi
+  aws_cmd ec2 modify-instance-attribute --instance-id "$instance_id" \
+    --instance-initiated-shutdown-behavior "Value=$(shutdown_behavior)"
+  case "$state" in
+    stopped)
+      aws_cmd ec2 start-instances --instance-ids "$instance_id" >/dev/null
+      aws_cmd ec2 wait instance-running --instance-ids "$instance_id"
+      ;;
+    running)
+      ;;
+    *)
+      die "$instance_id is $state"
+      ;;
+  esac
+  wait_ssm_online "$instance_id"
+
+  output="$(ssm_run "$instance_id" \
+    "pgrep -f run_pgss_benchmark_suite.sh >/dev/null && echo busy || echo idle")"
+  [[ "$output" == *idle* ]] || die "$instance_id is still running a benchmark"
+
+  volumes="$(aws_cmd ec2 describe-volumes \
+    --filters "Name=attachment.instance-id,Values=$instance_id" \
+    --query 'Volumes[].VolumeId' --output text)"
+  # shellcheck disable=SC2086
+  aws_cmd ec2 create-tags --resources "$instance_id" $volumes \
+    --tags "Key=RunId,Value=$run_id"
+
+  aws_cmd s3 cp --only-show-errors "$user_data" "$result_s3_uri/user-data.sh"
+  output="$(ssm_run "$instance_id" \
+    "aws s3 cp --only-show-errors '$result_s3_uri/user-data.sh' /root/pgss-user-data.sh && systemd-run --unit 'pgss-benchmark-$run_id' --collect bash /root/pgss-user-data.sh")"
+  [[ "$output" == Success* ]] || die "could not start the benchmark on $instance_id: $output"
 }
 
 main() {
@@ -246,25 +323,30 @@ main() {
   network_json="[{\"DeviceIndex\":0,\"SubnetId\":\"$subnet_id\",\"Groups\":[\"$security_group_id\"],\"AssociatePublicIpAddress\":$ASSOCIATE_PUBLIC_IP}]"
   block_device_json="[{\"DeviceName\":\"/dev/xvda\",\"Ebs\":{\"VolumeSize\":$VOLUME_SIZE_GB,\"VolumeType\":\"$VOLUME_TYPE\",\"Iops\":$VOLUME_IOPS,\"Throughput\":$VOLUME_THROUGHPUT,\"DeleteOnTermination\":true}}]"
 
-  instance_id="$(aws_cmd ec2 run-instances \
-    --image-id "$ami_id" \
-    --instance-type "$INSTANCE_TYPE" \
-    --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
-    --instance-initiated-shutdown-behavior terminate \
-    --metadata-options HttpTokens=required,HttpEndpoint=enabled \
-    --network-interfaces "$network_json" \
-    --block-device-mappings "$block_device_json" \
-    --user-data "file://$user_data" \
-    --tag-specifications \
-      "ResourceType=instance,Tags=[{Key=Name,Value=pgss-benchmark},{Key=RunId,Value=$run_id},{Key=Project,Value=pg_stat_statements_benchmark}]" \
-      "ResourceType=volume,Tags=[{Key=Name,Value=pgss-benchmark},{Key=RunId,Value=$run_id},{Key=Project,Value=pg_stat_statements_benchmark}]" \
-    --query 'Instances[0].InstanceId' \
-    --output text)"
+  if [[ -n "${REUSE_INSTANCE_ID:-}" ]]; then
+    instance_id="$REUSE_INSTANCE_ID"
+    reuse_instance "$instance_id" "$run_id" "$result_s3_uri" "$user_data"
+  else
+    instance_id="$(aws_cmd ec2 run-instances \
+      --image-id "$ami_id" \
+      --instance-type "$INSTANCE_TYPE" \
+      --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
+      --instance-initiated-shutdown-behavior "$(shutdown_behavior)" \
+      --metadata-options HttpTokens=required,HttpEndpoint=enabled \
+      --network-interfaces "$network_json" \
+      --block-device-mappings "$block_device_json" \
+      --user-data "file://$user_data" \
+      --tag-specifications \
+        "ResourceType=instance,Tags=[{Key=Name,Value=pgss-benchmark},{Key=RunId,Value=$run_id},{Key=Project,Value=pg_stat_statements_benchmark}]" \
+        "ResourceType=volume,Tags=[{Key=Name,Value=pgss-benchmark},{Key=RunId,Value=$run_id},{Key=Project,Value=pg_stat_statements_benchmark}]" \
+      --query 'Instances[0].InstanceId' \
+      --output text)"
+  fi
 
   write_latest_state "$run_id" "$instance_id" "$result_s3_uri"
 
   cat <<EOF
-Launched pg_stat_statements benchmark instance.
+Started pg_stat_statements benchmark.
 
 Run ID: $run_id
 Instance ID: $instance_id
