@@ -435,6 +435,24 @@ start_samplers() {
   ) >"$outdir/monitor_pgss.tsv" 2>"$outdir/monitor_pgss.err" &
   sampler_pids+=("$!")
 
+  # Entries allocated by the pg_stat_statements stats kind, which include
+  # removed entries not freed yet, next to the live ones.  Empty without
+  # entry counting, before PostgreSQL 19 or without the custom stats kind.
+  (
+    printf "%s\t%s\t%s\n" sample_epoch allocated_entries live_entries
+    sleep "$PGSS_SAMPLE_START_DELAY_SECONDS"
+    while true; do
+      sql_at -c "
+        select extract(epoch from clock_timestamp())::numeric(20,3),
+               (select entry_count from pg_stat_kind_info
+                where name = 'pg_stat_statements'),
+               (select count(*) from pg_stat_statements(false));" 2>/dev/null ||
+        true
+      sleep "$PGSS_SAMPLE_SECONDS"
+    done
+  ) >"$outdir/monitor_kind.tsv" 2>"$outdir/monitor_kind.err" &
+  sampler_pids+=("$!")
+
   (
     printf "%s\t%s\n" sample_epoch qtext_file_size
     sleep "$PGSS_SAMPLE_START_DELAY_SECONDS"
