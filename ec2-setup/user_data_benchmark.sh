@@ -106,6 +106,13 @@ runuser -l ec2-user -c "
   cd postgres
   git fetch origin '+$BASE_REF:refs/remotes/origin/$BASE_REF'
   git fetch samimseih '+$PATCH_REF:refs/remotes/samimseih/$PATCH_REF'
+  # The commits to benchmark may be on no fetched branch
+  if [[ -n '${PATCH_COMMIT:-}' ]] && ! git cat-file -e '${PATCH_COMMIT:-}^{commit}' 2>/dev/null; then
+    git fetch samimseih '${PATCH_COMMIT:-}'
+  fi
+  if [[ -n '${BASE_COMMIT:-}' ]] && ! git cat-file -e '${BASE_COMMIT:-}^{commit}' 2>/dev/null; then
+    git fetch origin '${BASE_COMMIT:-}'
+  fi
   if [[ '$BUILD_ROLE' != consumer && ! -d build-release ]]; then
     meson setup build-release \
       --prefix='$PREFIX/pghome/dev' \
