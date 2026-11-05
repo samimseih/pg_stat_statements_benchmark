@@ -111,8 +111,14 @@ samples of each point are saved in `progress.tsv`, and
 `report_tps_stability.sh` reports their spread (stddev, CV, percentiles) with a
 histogram for the points with a CV of `TPS_CV_BUCKETS` percent (default 5) or
 more, because the final TPS of a point averages over phases that may differ.
-`report_pgss_benchmark.sh` shows the stddev, CV and sample min-max next to
-the TPS of each point, and includes this report.
+It also gives each point a trend over time, from the mean TPS of equal time
+segments (`TPS_SEGMENTS`, default 5): `degrading` is a sustained decline, or
+a drop not recovered from, of `TPS_DRIFT_PCT` percent (default 5) or more
+from the first segment to the last; `dip recovered` is a hiccup the point
+recovers from; `declined`, `improving`, `rose` and `steady` are the other
+cases, see the script.  Points not steady get their TPS over time.
+`report_pgss_benchmark.sh` shows the stddev, CV, sample min-max and trend next
+to the TPS of each point, and includes this report.
 
 ## What gets captured
 

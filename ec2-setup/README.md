@@ -120,8 +120,11 @@ and S3 while it runs, or from its results archive once done.
 `report_fleet.py` prints the points done by each instance, then one table
 comparing patch and base for each workload, number of clients and instance
 type, smallest first: TPS and ratio, the stddev, CV (stddev / mean) and
-min-max of the TPS progress samples, entries min/avg/max, popular entries
-kept, query text file size and failures.  Last, for the points with a TPS CV
+min-max of the TPS progress samples and their trend over time, entries
+min/avg/max, popular entries kept, query text file size and failures, each as
+patch / base.  The points with a trend other than steady follow, with their
+mean TPS over time, which tells a sustained degradation from a dip recovered
+from.  Last, for the points with a TPS CV
 of `TPS_CV_BUCKETS` percent (default 5) or more, histograms of their samples
 by TPS relative to the median of the point, which tell apart steady noise
 from runs alternating between fast and slow phases.

@@ -199,18 +199,19 @@ TPS_FORMAT=tsv "$SCRIPT_DIR/report_tps_stability.sh" "$RESULT_DIR" >"$stability"
 awk -F $'\t' -v OFS=$'\t' '
   FNR == NR {
     if (FNR > 1 && $5 != "")
-      spread[$1 SUBSEP $2 SUBSEP $3] = $6 OFS $7 OFS $8 OFS $12
+      spread[$1 SUBSEP $2 SUBSEP $3] = $6 OFS $7 OFS $8 OFS $12 OFS $16 OFS $14
     next
   }
   FNR == 1 {
     for (i = 1; i <= NF; i++)
       col[$i] = i
-    print $0, "tps_stddev", "tps_cv_pct", "tps_sample_min", "tps_sample_max"
+    print $0, "tps_stddev", "tps_cv_pct", "tps_sample_min", "tps_sample_max",
+      "tps_trend", "tps_drift_pct"
     next
   }
   {
     k = $col["commit"] SUBSEP $col["workload"] SUBSEP $col["clients"]
-    print $0, (k in spread ? spread[k] : OFS OFS OFS)
+    print $0, (k in spread ? spread[k] : OFS OFS OFS OFS OFS)
   }' "$stability" "$summary_for_report" >"$summary_for_report.new"
 mv "$summary_for_report.new" "$summary_for_report"
 
@@ -426,6 +427,16 @@ function samplerangefmt(commit, workload, clients) {
          nfmt(cell(commit, workload, clients, "tps_max"))
 }
 
+# The trend of the TPS of a point over time, with its drift unless steady.
+function trendfmt(commit, workload, clients, t) {
+  t = cell(commit, workload, clients, "tps_trend")
+  if (t == "")
+    return "-"
+  if (t == "steady")
+    return t
+  return t " " sprintf("%+.1f%%", cell(commit, workload, clients, "tps_drift"))
+}
+
 function print_throughput(workload, i, clients, p, b) {
   if (!have_workload(workload))
     return
@@ -434,8 +445,9 @@ function print_throughput(workload, i, clients, p, b) {
   print ""
   print "| clients | patched TPS | baseline TPS | delta |" \
         " patched stddev / CV | baseline stddev / CV |" \
-        " patched sample min-max | baseline sample min-max |"
-  print "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        " patched sample min-max | baseline sample min-max |" \
+        " patched trend | baseline trend |"
+  print "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"
   for (i = 1; i <= nwanted; i++) {
     clients = wanted_clients[i]
     if (!have_pair(workload, clients))
@@ -446,7 +458,9 @@ function print_throughput(workload, i, clients, p, b) {
           spreadfmt(patched, workload, clients) " | " \
           spreadfmt(baseline, workload, clients) " | " \
           samplerangefmt(patched, workload, clients) " | " \
-          samplerangefmt(baseline, workload, clients) " |"
+          samplerangefmt(baseline, workload, clients) " | " \
+          trendfmt(patched, workload, clients) " | " \
+          trendfmt(baseline, workload, clients) " |"
   }
   print ""
 }
@@ -524,6 +538,8 @@ FNR == NR {
   data[key SUBSEP "tps_cv"] = $col["tps_cv_pct"]
   data[key SUBSEP "tps_min"] = $col["tps_sample_min"]
   data[key SUBSEP "tps_max"] = $col["tps_sample_max"]
+  data[key SUBSEP "tps_trend"] = $col["tps_trend"]
+  data[key SUBSEP "tps_drift"] = $col["tps_drift_pct"]
   data[key SUBSEP "duration"] = $col["duration_s"] + 0
   data[key SUBSEP "entries"] = $col["max_entries"] + 0
   data[key SUBSEP "entries_min"] = \
@@ -772,7 +788,8 @@ END {
   print "## Throughput"
   print ""
   print "Stddev, CV (stddev / mean) and sample min-max are those of the"
-  print "pgbench progress samples of each point, see TPS Stability."
+  print "pgbench progress samples of each point; the trend tells a sustained"
+  print "change over time from a dip recovered from.  See TPS Stability."
   print ""
   print_throughput(hot100)
   print_throughput(hot1500)

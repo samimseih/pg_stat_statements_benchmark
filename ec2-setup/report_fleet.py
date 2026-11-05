@@ -4,9 +4,10 @@
 Prints the progress of each instance, then one markdown table comparing the
 patch and the base for each workload, number of clients and instance type,
 smallest instance first, then the TPS histograms of the points whose TPS
-varies by a CV of TPS_CV_BUCKETS percent or more.  The TPS spread of each
-point comes from its pgbench progress samples, see report_tps_stability.sh,
-which computes it.
+varies by a CV of TPS_CV_BUCKETS percent or more.  The TPS spread and trend
+of each point come from its pgbench progress samples, see
+report_tps_stability.sh, which computes them, and the points with a trend
+other than steady get their TPS over time.
 
 usage: report_fleet.py <fleet id | fleet results dir>
 """
@@ -45,6 +46,12 @@ def k(x):
     return f"{float(x) / 1000:.1f}k"
 
 
+def trend(s):
+    if s["trend"] == "steady":
+        return "steady"
+    return f"{s['trend']} {float(s['drift_pct']):+.1f}%"
+
+
 def pair(p, b, fmt):
     return f"{fmt(p) if p else '-'} / {fmt(b) if b else '-'}"
 
@@ -58,7 +65,7 @@ def main():
     if not instances:
         sys.exit(f"error: no instances.tsv in {d}, run fetch_fleet_status.sh")
 
-    rows, hists = [], []
+    rows, hists, profiles = [], [], []
     print("| Instance | vCPUs | State | Points done |")
     print("|---|---:|---|---:|")
     for rank, inst in enumerate(instances):
@@ -87,6 +94,7 @@ def main():
                 pair(sp, sb, lambda s: k(s["stddev"])),
                 pair(sp, sb, lambda s: f"{float(s['cv_pct']):.1f}%"),
                 pair(sp, sb, lambda s: f"{k(s['min'])}-{k(s['max'])}"),
+                pair(sp, sb, trend),
                 (f"{p['min_entries']}/{p['avg_entries']}/{p['max_entries']}"
                  if p else "-"),
                 (f"{b['min_entries']}/{b['avg_entries']}/{b['max_entries']}"
@@ -95,6 +103,12 @@ def main():
                 pair(p, b, lambda r: f"{float(r['max_qtext_file_size']) / 1048576:.2f}"),
                 pair(p, b, lambda r: r["failed"]),
             ]) + " |"))
+            if any(s and s["trend"] != "steady" for s in (sp, sb)):
+                for order, (name, s) in enumerate((("patch", sp), ("base", sb))):
+                    if s:
+                        profiles.append(((w, c, rank, order), "| " + " | ".join(
+                            [w, str(c), t, name, trend(s)]
+                            + [k(x) for x in s["segments"].split()]) + " |"))
             if any(s and float(s["cv_pct"]) >= CV_BUCKETS for s in (sp, sb)):
                 for order, (name, s) in enumerate((("patch", sp), ("base", sb))):
                     if s:
@@ -106,11 +120,28 @@ def main():
 
     print("| Workload | Clients | Instance | TPS patch / base | Performance ratio "
           "| TPS stddev p / b | TPS CV p / b | Sample TPS min-max p / b "
+          "| TPS trend p / b "
           "| Entries min/avg/max, patch | Entries min/avg/max, base "
           "| Popular kept (min) p / b | Text file max MB p / b | Failed p / b |")
-    print("|---" * 13 + "|")
+    print("|---" * 14 + "|")
     for _, line in sorted(rows):
         print(line)
+    print()
+
+    if profiles:
+        print("TPS over time of the points with a trend other than steady: "
+              "mean TPS of each equal time segment, in time order.  Degrading "
+              "is a sustained decline, or a drop not recovered from; dip "
+              "recovered is a hiccup.")
+        print()
+        nseg = len(profiles[0][1].split("|")) - 7
+        print("| Workload | Clients | Instance | Build | Trend | "
+              + " | ".join(str(g + 1) for g in range(nseg)) + " |")
+        print("|---" * (5 + nseg) + "|")
+        for _, line in sorted(profiles):
+            print(line)
+    else:
+        print("All points are steady over time.")
     print()
 
     if not hists:
