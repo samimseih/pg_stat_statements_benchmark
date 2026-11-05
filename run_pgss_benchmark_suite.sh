@@ -167,9 +167,16 @@ sql_at() {
   "${PSQL_AT[@]}" "$@"
 }
 
+# Size of the query text storage: the memory of query texts in shared memory
+# for builds reporting it in pg_stat_statements_info, else the size of the
+# external query text file.
 qtext_file_size() {
   local total=0
   local qtext_file
+
+  total="$(sql_at -c "select query_text_memory from pg_stat_statements_info" 2>/dev/null)" &&
+    [[ -n "$total" ]] && { echo "$total"; return; }
+  total=0
 
   shopt -s nullglob
   for qtext_file in "$PGDATA"/pg_stat_tmp/pgss_query_texts.stat \

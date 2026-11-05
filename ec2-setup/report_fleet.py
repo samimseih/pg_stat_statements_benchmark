@@ -46,7 +46,8 @@ commit, without the patch).
 - **Popular kept (min):** fewest of the 4000 popular statements present in
   a sample; 4000 means eviction never removed a popular one.  n/a for
   select_only, which runs few statements.
-- **Text file max MB:** largest size of the query text file.
+- **Text storage max MB:** largest size of the query text storage: the query
+  text memory in shared memory where reported, else the query text file.
 - **Failed:** pgbench transactions that failed."""
 
 NOTE_PROFILE = """\
@@ -186,7 +187,7 @@ def main():
           "| TPS stddev patch / upstream | TPS CV patch / upstream | Sample TPS min-max patch / upstream "
           "| TPS trend patch / upstream "
           "| Entries min/avg/max, patch | Entries min/avg/max, upstream "
-          "| Popular kept (min) patch / upstream | Text file max MB patch / upstream | Failed patch / upstream |")
+          "| Popular kept (min) patch / upstream | Text storage max MB patch / upstream | Failed patch / upstream |")
     print("|---" * 14 + "|")
     for _, line in sorted(rows):
         print(line)
