@@ -825,3 +825,6 @@ END {
   print "  pg_stat_statements LWLock bottleneck."
 }
 ' "$summary_for_report" "$wait_summary"
+
+echo
+"$SCRIPT_DIR/report_tps_stability.sh" "$RESULT_DIR"

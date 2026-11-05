@@ -91,10 +91,10 @@ Workloads:
 
 - `hotcold_4000_100m`: 90% of executions choose from 4000 popular query texts,
   10% choose from a large cold/churn keyspace of 100000000 unpopular IDs.
-  Duration: 60 seconds.
+  Duration: 300 seconds.
 - `hotcold_4000_1500`: 90% choose from 4000 popular query texts, 10% choose from
-  a bounded cold/churn keyspace of 1500 unpopular IDs. Duration: 60 seconds.
-- `select_only`: pgbench `-S` after `pgbench -i -s 10`. Duration: 120
+  a bounded cold/churn keyspace of 1500 unpopular IDs. Duration: 300 seconds.
+- `select_only`: pgbench `-S` after `pgbench -i -s 10`. Duration: 300
   seconds.
 
 The hot/cold workloads use query names like `CTEPOP_123` and `CTEUNPOP_456`
@@ -105,6 +105,12 @@ cold/churn entries.
 The default durations can be changed with `HOTCOLD_SECONDS` and
 `SELECT_SECONDS`.  Individual workload groups can be disabled with
 `RUN_HOTCOLD_4000_100M=0`, `RUN_HOTCOLD_4000_1500=0`, or `RUN_SELECT_ONLY=0`.
+
+pgbench reports its progress every `PROGRESS_SECONDS` (default 2).  The
+samples of each point are saved in `progress.tsv`, and
+`report_tps_stability.sh` reports their spread (stddev, CV, percentiles) with a
+histogram for unstable points, because the final TPS of a point averages over
+phases that may differ.  `report_pgss_benchmark.sh` includes this report.
 
 ## What gets captured
 
@@ -180,8 +186,9 @@ interrupts.  By default CPUs are left alone.
 
 By default, `RUN_ORDER=commit_major` builds one commit and runs all selected
 points for it before moving to the next commit.  `RUN_ORDER=interleaved` builds
-each commit once into a commit-specific install prefix, then alternates commits
-per client point with a fresh `initdb` for each point.
+each commit once into a commit-specific install prefix, then runs the workloads
+back to back for each number of clients, alternating commits for each point,
+with a fresh `initdb` for each point.
 
 Defaults:
 

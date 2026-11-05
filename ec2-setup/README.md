@@ -54,8 +54,8 @@ AUTO_TERMINATE=0 ./launch_benchmark_instance.sh
 ```
 
 `RUN_ORDER=interleaved` builds each tested commit once into its own install
-prefix, then alternates patch/baseline per client point with a fresh `initdb`
-for each point.
+prefix, then runs the workloads back to back for each number of clients,
+alternating patch/baseline per point with a fresh `initdb` for each point.
 
 The launch script creates, or reuses, these account resources:
 

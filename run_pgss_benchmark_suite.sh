@@ -40,7 +40,7 @@ MAX_THREADS="${MAX_THREADS:-32}"
 CPU_LIMIT="${CPU_LIMIT:-0}"
 CPU_SET="${CPU_SET:-}"
 CPU_SCRIPT="${CPU_SCRIPT:-$SCRIPT_DIR/set_cpus.sh}"
-PROGRESS_SECONDS="${PROGRESS_SECONDS:-10}"
+PROGRESS_SECONDS="${PROGRESS_SECONDS:-2}"
 PGSS_SAMPLE_SECONDS="${PGSS_SAMPLE_SECONDS:-5}"
 PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
 RUN_HOTCOLD_4000_100M="${RUN_HOTCOLD_4000_100M:-1}"
@@ -48,8 +48,8 @@ RUN_HOTCOLD_4000_1500="${RUN_HOTCOLD_4000_1500:-1}"
 RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
 RUN_ORDER="${RUN_ORDER:-commit_major}"
 
-HOTCOLD_SECONDS="${HOTCOLD_SECONDS:-60}"
-SELECT_SECONDS="${SELECT_SECONDS:-120}"
+HOTCOLD_SECONDS="${HOTCOLD_SECONDS:-300}"
+SELECT_SECONDS="${SELECT_SECONDS:-300}"
 SELECT_SCALE="${SELECT_SCALE:-10}"
 SELECT_WARMUP_SECONDS="${SELECT_WARMUP_SECONDS:-30}"
 
@@ -67,6 +67,7 @@ PGDATA=""
 PGBENCH=""
 
 summary="$RESULT_ROOT/summary.tsv"
+progress="$RESULT_ROOT/progress.tsv"
 original_ref=""
 
 declare -a PSQL
@@ -698,6 +699,20 @@ extract_final_info_summary() {
     }' "$file"
 }
 
+# Append the pgbench progress samples of a point to progress.tsv, for
+# report_tps_stability.sh.
+append_progress() {
+  local commit="$1" workload="$2" clients="$3" log="$4"
+
+  awk -v c="$commit" -v w="$workload" -v n="$clients" '
+    /^progress: / {
+      gsub(/,/, "")
+      # progress: 10.0 s 22130.4 tps lat 0.045 ms stddev 0.032 0 failed
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c, w, n, $2, $4, $7, $10,
+        ($12 == "failed" ? $11 : 0)
+    }' "$log" >>"$progress"
+}
+
 append_summary() {
   local commit="$1" workload="$2" clients="$3" threads="$4" duration="$5" status="$6" outdir="$7"
   local tps latency failed
@@ -803,6 +818,7 @@ run_pgbench_capture() {
   sql -f "$SCRIPT_DIR/benchmark_analyze.sql" >"$outdir/analyze.out" 2>"$outdir/analyze.err" || true
   tail -n 200 "$PGDATA/logfile" >"$outdir/server_log_tail.log" 2>/dev/null || true
   append_summary "$commit" "$workload" "$clients" "$threads" "$duration" "$status" "$outdir"
+  append_progress "$commit" "$workload" "$clients" "$outdir/pgbench.log"
 
   if [[ "$status" != "0" ]]; then
     echo "pgbench failed for $commit $workload c$clients; see $outdir/pgbench.log" >&2
@@ -818,22 +834,6 @@ run_hotcold_ladder() {
     run_pgbench_capture "$commit" "$workload" "$clients" "$HOTCOLD_SECONDS" \
       "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
       -P "$PROGRESS_SECONDS" -f "$script"
-  done
-}
-
-run_interleaved_hotcold_ladder() {
-  local workload="$1" script="$2"
-  local clients commit short_commit
-
-  for clients in "${CLIENTS[@]}"; do
-    for commit in "${COMMITS[@]}"; do
-      short_commit="${COMMIT_SHORT_NAME[$commit]}"
-      start_prepared_commit "$commit"
-      echo "==> $short_commit $workload clients=$clients"
-      run_pgbench_capture "$short_commit" "$workload" "$clients" "$HOTCOLD_SECONDS" \
-        "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
-        -P "$PROGRESS_SECONDS" -f "$script"
-    done
   done
 }
 
@@ -858,48 +858,69 @@ run_select_only_ladder() {
   done
 }
 
-run_interleaved_select_only_ladder() {
-  local clients commit short_commit
+run_interleaved_hotcold_point() {
+  local workload="$1" script="$2" clients="$3"
+  local commit short_commit
 
-  for clients in "${SELECT_CLIENTS[@]}"; do
-    for commit in "${COMMITS[@]}"; do
-      short_commit="${COMMIT_SHORT_NAME[$commit]}"
-      start_prepared_commit "$commit"
-
-      echo "==> $short_commit select_only init scale=$SELECT_SCALE"
-      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -i -s "$SELECT_SCALE" "$PGDATABASE" \
-        >"$RESULT_ROOT/$short_commit/select_init_c$clients.log" 2>&1
-
-      echo "==> $short_commit select_only warmup ${SELECT_WARMUP_SECONDS}s"
-      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
-        -c 32 -j 32 -T "$SELECT_WARMUP_SECONDS" -S "$PGDATABASE" \
-        >"$RESULT_ROOT/$short_commit/select_warmup_c$clients.log" 2>&1
-
-      echo "==> $short_commit select_only clients=$clients"
-      run_pgbench_capture "$short_commit" select_only "$clients" "$SELECT_SECONDS" \
-        "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
-        -P "$PROGRESS_SECONDS" -S
-    done
+  for commit in "${COMMITS[@]}"; do
+    short_commit="${COMMIT_SHORT_NAME[$commit]}"
+    start_prepared_commit "$commit"
+    echo "==> $short_commit $workload clients=$clients"
+    run_pgbench_capture "$short_commit" "$workload" "$clients" "$HOTCOLD_SECONDS" \
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
+      -P "$PROGRESS_SECONDS" -f "$script"
   done
 }
 
+run_interleaved_select_only_point() {
+  local clients="$1"
+  local commit short_commit
+
+  for commit in "${COMMITS[@]}"; do
+    short_commit="${COMMIT_SHORT_NAME[$commit]}"
+    start_prepared_commit "$commit"
+
+    echo "==> $short_commit select_only init scale=$SELECT_SCALE"
+    "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -i -s "$SELECT_SCALE" "$PGDATABASE" \
+      >"$RESULT_ROOT/$short_commit/select_init_c$clients.log" 2>&1
+
+    echo "==> $short_commit select_only warmup ${SELECT_WARMUP_SECONDS}s"
+    "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
+      -c 32 -j 32 -T "$SELECT_WARMUP_SECONDS" -S "$PGDATABASE" \
+      >"$RESULT_ROOT/$short_commit/select_warmup_c$clients.log" 2>&1
+
+    echo "==> $short_commit select_only clients=$clients"
+    run_pgbench_capture "$short_commit" select_only "$clients" "$SELECT_SECONDS" \
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared \
+      -P "$PROGRESS_SECONDS" -S
+  done
+}
+
+# Run the workloads back to back for each number of clients, alternating the
+# commits for each point, so that every workload has results early.
 run_interleaved() {
-  local commit
+  local commit clients
 
   for commit in "${COMMITS[@]}"; do
     prepare_commit_install "$commit"
   done
   cpu_limit_apply
 
-  if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
-    run_interleaved_hotcold_ladder hotcold_4000_100m "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql"
-  fi
-  if [[ "$RUN_HOTCOLD_4000_1500" == "1" ]]; then
-    run_interleaved_hotcold_ladder hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql"
-  fi
-  if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
-    run_interleaved_select_only_ladder
-  fi
+  for clients in $(printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu); do
+    if [[ " ${CLIENTS[*]} " == *" $clients "* ]]; then
+      if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
+        run_interleaved_hotcold_point hotcold_4000_100m \
+          "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql" "$clients"
+      fi
+      if [[ "$RUN_HOTCOLD_4000_1500" == "1" ]]; then
+        run_interleaved_hotcold_point hotcold_4000_1500 \
+          "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql" "$clients"
+      fi
+    fi
+    if [[ "$RUN_SELECT_ONLY" == "1" && " ${SELECT_CLIENTS[*]} " == *" $clients "* ]]; then
+      run_interleaved_select_only_point "$clients"
+    fi
+  done
 }
 
 run_commit_major() {
@@ -986,6 +1007,7 @@ main() {
     printf "\t%s" "${header[$i]}" >>"$summary"
   done
   printf "\n" >>"$summary"
+  printf 'commit\tworkload\tclients\tt\ttps\tlat_ms\tlat_stddev_ms\tfailed\n' >"$progress"
 
   if [[ "$RUN_ORDER" == "interleaved" ]]; then
     run_interleaved
@@ -996,6 +1018,7 @@ main() {
   echo
   echo "Results: $RESULT_ROOT"
   echo "Summary: $summary"
+  echo "Progress: $progress"
 }
 
 main "$@"
