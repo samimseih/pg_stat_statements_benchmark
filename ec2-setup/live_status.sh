@@ -72,7 +72,7 @@ cat >"$commands_file" <<JSON
     "log_file='$log_file'",
     "repo='/home/ec2-user/pgss-benchmark/postgres'",
     "patch_ref='${PATCH_COMMIT:-samimseih/${PATCH_REF:-pg_stat_statements_v14}}'",
-    "base_ref='origin/${BASE_REF:-master}'",
+    "base_ref='${BASE_COMMIT:-origin/${BASE_REF:-master}}'",
     "expected_points='$expected_points'",
     "verbose='${LIVE_VERBOSE:-0}'",
     "patch_commit=\$(git -c safe.directory=\"\$repo\" -C \"\$repo\" rev-parse --short=12 \"\$patch_ref\" 2>/dev/null || true)",
