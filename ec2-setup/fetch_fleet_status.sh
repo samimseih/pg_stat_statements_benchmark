@@ -69,7 +69,7 @@ fetch_done() {
   rm -rf "$tmp"
 }
 
-printf 'type\tvcpus\tstate\trun_id\tpatch_commit\tbase_commit\tworkloads\tclients\tselect_clients\n' \
+printf 'type\tvcpus\tstate\trun_id\tpatch_commit\tbase_commit\tworkloads\tclients\tselect_clients\thotcold_100m_clients\thotcold_1500_clients\n' \
   >"$out/instances.tsv.new"
 
 for env_file in "$STATE_DIR/$FLEET_ID"-*.env; do
@@ -105,8 +105,9 @@ for env_file in "$STATE_DIR/$FLEET_ID"-*.env; do
     [[ "${RUN_HOTCOLD_4000_100M:-1}" == 1 ]] && workloads+="hotcold_4000_100m "
     [[ "${RUN_HOTCOLD_4000_1500:-1}" == 1 ]] && workloads+="hotcold_4000_1500 "
     [[ "${RUN_SELECT_ONLY:-1}" == 1 ]] && workloads+="select_only"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$vcpus" "$state" "$run_id" \
-      "$PATCH_COMMIT" "$BASE_COMMIT" "$workloads" "$CLIENTS" "$SELECT_CLIENTS"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$vcpus" "$state" "$run_id" \
+      "$PATCH_COMMIT" "$BASE_COMMIT" "$workloads" "$CLIENTS" "$SELECT_CLIENTS" \
+      "${HOTCOLD_100M_CLIENTS:-$CLIENTS}" "${HOTCOLD_1500_CLIENTS:-$CLIENTS}"
   ) >>"$out/instances.tsv.new"
 done
 mv "$out/instances.tsv.new" "$out/instances.tsv"

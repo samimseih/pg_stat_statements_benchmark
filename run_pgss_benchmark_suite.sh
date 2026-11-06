@@ -36,6 +36,8 @@ PGDATABASE="${PGDATABASE:-postgres}"
 COMMITS=(${COMMITS:-fbef23389f1 3051c223a60})
 CLIENTS=(${CLIENTS:-1 2 4 8 16 32 64 128 256})
 SELECT_CLIENTS=(${SELECT_CLIENTS:-${CLIENTS[*]}})
+HOTCOLD_100M_CLIENTS=(${HOTCOLD_100M_CLIENTS:-${CLIENTS[*]}})
+HOTCOLD_1500_CLIENTS=(${HOTCOLD_1500_CLIENTS:-${CLIENTS[*]}})
 MAX_THREADS="${MAX_THREADS:-32}"
 CPU_LIMIT="${CPU_LIMIT:-0}"
 CPU_SET="${CPU_SET:-}"
@@ -854,8 +856,10 @@ run_pgbench_capture() {
 run_hotcold_ladder() {
   local commit="$1" workload="$2" script="$3"
   local clients
+  local -a list=("${HOTCOLD_100M_CLIENTS[@]}")
 
-  for clients in "${CLIENTS[@]}"; do
+  [[ "$workload" == hotcold_4000_1500 ]] && list=("${HOTCOLD_1500_CLIENTS[@]}")
+  for clients in "${list[@]}"; do
     echo "==> $commit $workload clients=$clients"
     run_pgbench_capture "$commit" "$workload" "$clients" "$HOTCOLD_SECONDS" \
       "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
@@ -925,16 +929,18 @@ run_interleaved_select_only_point() {
 # The numbers of clients of all workloads, ascending, or with
 # CLIENT_ORDER=outside_in alternating the smallest and the largest left, so
 # that both ends of the range have results early, or with CLIENT_ORDER=listed
-# in the order of CLIENTS, then of SELECT_CLIENTS.
+# in the order of CLIENTS, then of the per-workload lists.
 interleaved_clients() {
   local -a sorted
   local lo hi
 
   if [[ "$CLIENT_ORDER" == listed ]]; then
-    printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | awk '!seen[$0]++'
+    printf '%s\n' "${CLIENTS[@]}" "${HOTCOLD_100M_CLIENTS[@]}" \
+      "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | awk '!seen[$0]++'
     return
   fi
-  mapfile -t sorted < <(printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu)
+  mapfile -t sorted < <(printf '%s\n' "${HOTCOLD_100M_CLIENTS[@]}" \
+    "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu)
   if [[ "$CLIENT_ORDER" != outside_in ]]; then
     printf '%s\n' "${sorted[@]}"
     return
@@ -956,15 +962,15 @@ run_interleaved() {
   cpu_limit_apply
 
   for clients in $(interleaved_clients); do
-    if [[ " ${CLIENTS[*]} " == *" $clients "* ]]; then
-      if [[ "$RUN_HOTCOLD_4000_100M" == "1" ]]; then
-        run_interleaved_hotcold_point hotcold_4000_100m \
-          "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql" "$clients"
-      fi
-      if [[ "$RUN_HOTCOLD_4000_1500" == "1" ]]; then
-        run_interleaved_hotcold_point hotcold_4000_1500 \
-          "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql" "$clients"
-      fi
+    if [[ "$RUN_HOTCOLD_4000_100M" == "1" &&
+          " ${HOTCOLD_100M_CLIENTS[*]} " == *" $clients "* ]]; then
+      run_interleaved_hotcold_point hotcold_4000_100m \
+        "$SCRIPT_DIR/pgbench_hot_cold_4000_100m.sql" "$clients"
+    fi
+    if [[ "$RUN_HOTCOLD_4000_1500" == "1" &&
+          " ${HOTCOLD_1500_CLIENTS[*]} " == *" $clients "* ]]; then
+      run_interleaved_hotcold_point hotcold_4000_1500 \
+        "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql" "$clients"
     fi
     if [[ "$RUN_SELECT_ONLY" == "1" && " ${SELECT_CLIENTS[*]} " == *" $clients "* ]]; then
       run_interleaved_select_only_point "$clients"

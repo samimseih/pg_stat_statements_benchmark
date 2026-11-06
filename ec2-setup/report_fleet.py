@@ -135,8 +135,10 @@ def main():
         t = inst["type"]
         patch, base = inst["patch_commit"][:12], inst["base_commit"][:12]
         workloads = inst["workloads"].split()
-        expected = 2 * sum(len((inst["select_clients"] if w == "select_only"
-                                else inst["clients"]).split())
+        lists = {"select_only": inst["select_clients"],
+                 "hotcold_4000_100m": inst.get("hotcold_100m_clients") or inst["clients"],
+                 "hotcold_4000_1500": inst.get("hotcold_1500_clients") or inst["clients"]}
+        expected = 2 * sum(len(lists.get(w, inst["clients"]).split())
                            for w in workloads)
         summ = {(r["commit"], r["workload"], int(r["clients"])): r
                 for r in read_tsv(os.path.join(d, f"{t}.summary.tsv"))

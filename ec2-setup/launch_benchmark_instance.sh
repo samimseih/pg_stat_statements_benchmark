@@ -187,6 +187,8 @@ render_user_data() {
     write_env_var BENCHMARK_REPO "$BENCHMARK_REPO"
     write_env_var CLIENTS "$CLIENTS"
     write_env_var SELECT_CLIENTS "$SELECT_CLIENTS"
+    write_env_var HOTCOLD_100M_CLIENTS "$HOTCOLD_100M_CLIENTS"
+    write_env_var HOTCOLD_1500_CLIENTS "$HOTCOLD_1500_CLIENTS"
     write_env_var HOTCOLD_SECONDS "$HOTCOLD_SECONDS"
     write_env_var SELECT_SECONDS "$SELECT_SECONDS"
     write_env_var RUN_HOTCOLD_4000_100M "$RUN_HOTCOLD_4000_100M"
