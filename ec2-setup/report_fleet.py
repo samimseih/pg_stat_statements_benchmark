@@ -20,6 +20,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STABILITY = os.path.join(SCRIPT_DIR, "..", "report_tps_stability.sh")
 BUCKETS = ["<50%", "50-80%", "80-95%", "95-105%", "105-120%", ">=120%"]
 CV_BUCKETS = float(os.environ.get("TPS_CV_BUCKETS", "5"))
+PGSS_MAX = int(os.environ.get("PGSS_MAX", "5000"))
 
 # Explanations printed under the tables, as markdown blockquotes.
 NOTE_PROGRESS = """\
@@ -50,6 +51,13 @@ commit, without the patch).
   pg_stat_kind_info, which counts every allocated entry, including evicted
   ones not freed yet because a backend still references them.  Upstream has
   no such count.
+- **Valve engaged:** share of samples with allocated entries at twice
+  pg_stat_statements.max, where the patch does not track new statements.
+- **Eviction passes per 1M transactions:** dealloc of the point over its
+  transactions.  Passes run as new entries fill pg_stat_statements.max, so
+  far fewer passes for the patch than for upstream at the same workload
+  mean new statements were not tracked; a pass of the patch can also
+  remove more than 5% of entries, so this is a rough indication.
 - **Popular kept (min):** fewest of the 4000 popular statements present in
   a sample; 4000 means eviction never removed a popular one.  n/a for
   select_only, which runs few statements.
@@ -175,6 +183,10 @@ def main():
                  if b else "-"),
                 ((lambda a: f"{a['min_allocated']}/{a['avg_allocated']}/{a['max_allocated']}"
                   if a else "-")(kind.get((patch, w, c)))),
+                ((lambda a: f"{a['at_cap_pct']}%" if a and a.get("at_cap_pct") else "-")
+                 (kind.get((patch, w, c)))),
+                pair(p, b, lambda r: f"{float(r['final_entry_dealloc']) / (float(r['tps']) * float(r['duration_s'])) * 1e6:.0f}"
+                     if float(r["tps"]) > 0 else "-"),
                 ("n/a" if w == "select_only"
                  else pair(p, b, lambda r: r["min_pop_entries"])),
                 pair(p, b, lambda r: f"{float(r['max_qtext_file_size']) / 1048576:.2f}"),
@@ -200,9 +212,10 @@ def main():
           "| TPS stddev patch / upstream | TPS CV patch / upstream | Sample TPS min-max patch / upstream "
           "| TPS trend patch / upstream "
           "| Entries min/avg/max, patch | Entries min/avg/max, upstream "
-          "| Allocated entries min/avg/max, patch "
+          "| Allocated entries min/avg/max, patch | Valve engaged, patch "
+          "| Eviction passes per 1M transactions patch / upstream "
           "| Popular kept (min) patch / upstream | Text storage max MB patch / upstream | Failed patch / upstream |")
-    print("|---" * 15 + "|")
+    print("|---" * 17 + "|")
     for _, line in sorted(rows):
         print(line)
     note(NOTE_MAIN)
