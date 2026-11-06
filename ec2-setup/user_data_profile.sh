@@ -115,6 +115,7 @@ PROFILE_CLIENTS="${PROFILE_CLIENTS:?}"
 PROFILE_SECONDS="${PROFILE_SECONDS:-150}"
 PROFILE_WARMUP_SECONDS="${PROFILE_WARMUP_SECONDS:-20}"
 PROFILE_RECORD_SECONDS="${PROFILE_RECORD_SECONDS:-90}"
+PROFILE_WORKLOAD="${PROFILE_WORKLOAD:-hotcold_4000_100m}"
 PGSS_MAX="${PGSS_MAX:-5000}"
 MAX_CONNECTIONS="${MAX_CONNECTIONS:-300}"
 
@@ -260,7 +261,7 @@ run_point() {
 
   short_commit="$(git -C "$PG_WORKTREE" rev-parse --short=12 HEAD)"
   threads="$(threads_for_clients "$clients")"
-  outdir="$RESULT_ROOT/$label-$short_commit/hotcold_4000_100m/c$clients"
+  outdir="$RESULT_ROOT/$label-$short_commit/$PROFILE_WORKLOAD/c$clients"
   mkdir -p "$outdir"
 
   {
@@ -277,12 +278,19 @@ run_point() {
 
   reset_pgss
   start_wait_sampler "$outdir"
+  log_start="$(wc -l <"$PGDATA/logfile" 2>/dev/null || echo 0)"
 
   set +e
-  "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
-    -P 10 -f "$BENCHMARK_DIR/pgbench_hot_cold_4000_100m.sql" \
-    -c "$clients" -j "$threads" -T "$PROFILE_SECONDS" "$PGDATABASE" \
-    >"$outdir/pgbench.log" 2>&1 &
+  if [[ "$PROFILE_WORKLOAD" == select_only ]]; then
+    "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared -S \
+      -P 2 -c "$clients" -j "$threads" -T "$PROFILE_SECONDS" "$PGDATABASE" \
+      >"$outdir/pgbench.log" 2>&1 &
+  else
+    "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
+      -P 2 -f "$BENCHMARK_DIR/pgbench_${PROFILE_WORKLOAD/hotcold/hot_cold}.sql" \
+      -c "$clients" -j "$threads" -T "$PROFILE_SECONDS" "$PGDATABASE" \
+      >"$outdir/pgbench.log" 2>&1 &
+  fi
   pgbench_pid="$!"
 
   sleep "$PROFILE_WARMUP_SECONDS"
@@ -305,6 +313,9 @@ run_point() {
   capture_pgss "$outdir"
   summarize_waits "$outdir/waits.tsv" >"$outdir/wait_summary.tsv"
   tail -n 200 "$PGDATA/logfile" >"$outdir/server_log_tail.log" 2>/dev/null || true
+  # Lines logged by instrumented builds during this point
+  tail -n "+$((log_start + 1))" "$PGDATA/logfile" 2>/dev/null |
+    grep 'PGSS_' >"$outdir/pgss_instr.log" || true
 
   printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "$label" "$short_commit" "$clients" "$status" \
@@ -332,6 +343,12 @@ main() {
     label="${spec%%=*}"
     commit="${spec#*=}"
     build_commit "$commit"
+    if [[ "$PROFILE_WORKLOAD" == select_only ]]; then
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -i -s 10 "$PGDATABASE" \
+        >"$RESULT_ROOT/select_init_$label.log" 2>&1
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M prepared -S \
+        -c 32 -j 32 -T 30 "$PGDATABASE" >"$RESULT_ROOT/select_warmup_$label.log" 2>&1
+    fi
 
     for clients_value in "${clients[@]}"; do
       echo "==> Profiling $label $commit clients=$clients_value"
@@ -358,6 +375,7 @@ runuser -l ec2-user -c "
     PROFILE_SECONDS='$PROFILE_SECONDS' \
     PROFILE_WARMUP_SECONDS='$PROFILE_WARMUP_SECONDS' \
     PROFILE_RECORD_SECONDS='$PROFILE_RECORD_SECONDS' \
+    PROFILE_WORKLOAD='${PROFILE_WORKLOAD:-hotcold_4000_100m}' \
     PGSS_MAX='$PGSS_MAX' \
     MAX_CONNECTIONS='$MAX_CONNECTIONS' \
     '$WORK_ROOT/profile_pgss.sh'

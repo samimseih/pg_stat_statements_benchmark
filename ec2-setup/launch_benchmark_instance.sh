@@ -208,6 +208,7 @@ render_user_data() {
     write_env_var PROFILE_SECONDS "$PROFILE_SECONDS"
     write_env_var PROFILE_WARMUP_SECONDS "$PROFILE_WARMUP_SECONDS"
     write_env_var PROFILE_RECORD_SECONDS "$PROFILE_RECORD_SECONDS"
+    write_env_var PROFILE_WORKLOAD "${PROFILE_WORKLOAD:-hotcold_4000_100m}"
   } >"$env_file"
 
   user_data_template="${USER_DATA_TEMPLATE:-$SCRIPT_DIR/user_data_benchmark.sh}"
