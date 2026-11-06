@@ -94,6 +94,14 @@ Buckets are relative to the median, so they compare across TPS levels; they
 do not show when samples happened, which the trend does."""
 
 
+NOTE_AGE = """\
+**How to read this:** what a user sampling the view sees.  Older buckets
+hold the long-lived entries, mostly hot ones, and should match.  The youngest
+show churn: the patch shows fewer when it does not track new statements under
+churn, and also hides entries created within about a second whose counts are
+still pending, as the view hides entries without calls."""
+
+
 def note(text):
     print()
     for line in text.splitlines():
@@ -143,7 +151,8 @@ def main():
     if not instances:
         sys.exit(f"error: no instances.tsv in {d}, run fetch_fleet_status.sh")
 
-    rows, hists, profiles = [], [], []
+    rows, hists, profiles, ages = [], [], [], []
+    age_buckets = ["1:<1s", "2:1-10s", "3:10s-1min", "4:1-5min", "5:>5min"]
     print("| Instance | vCPUs | State | Points done |")
     print("|---|---:|---|---:|")
     for rank, inst in enumerate(instances):
@@ -160,6 +169,10 @@ def main():
                 if r.get("tps")}
         kind = {(r["commit"][:12], r["workload"], int(r["clients"])): r
                  for r in read_tsv(os.path.join(d, f"{t}.kind.tsv"))}
+        age = {}
+        for r in read_tsv(os.path.join(d, f"{t}.age.tsv")):
+            age.setdefault((r["commit"][:12], r["workload"], int(r["clients"])),
+                           {})[r["created"]] = r["avg_count"]
         print(f"| {t} | {inst['vcpus']} | {inst['state']} "
               f"| {len(summ)} / {expected} |")
         st = stability(os.path.join(d, f"{t}.progress.tsv"))
@@ -192,6 +205,12 @@ def main():
                 pair(p, b, lambda r: f"{float(r['max_qtext_file_size']) / 1048576:.2f}"),
                 pair(p, b, lambda r: r["failed"]),
             ]) + " |"))
+            ap, ab = age.get((patch, w, c)), age.get((base, w, c))
+            if ap or ab:
+                ages.append(((w, c, rank), "| " + " | ".join(
+                    [w, str(c), t] + [
+                        f"{(ap or {}).get(bk, '0' if ap else '-')} / {(ab or {}).get(bk, '0' if ab else '-')}"
+                        for bk in age_buckets]) + " |"))
             if any(s and s["trend"] != "steady" for s in (sp, sb)):
                 for order, (name, s) in enumerate((("patch", sp), ("upstream", sb))):
                     if s:
@@ -237,6 +256,17 @@ def main():
     else:
         print("All points are steady over time.")
     print()
+
+    if ages:
+        print("Entries of the view by how long ago they were created "
+              "(stats_since), average over the samples, patch / upstream.")
+        print()
+        print("| Workload | Clients | Instance | <1s | 1-10s | 10s-1min | 1-5min | >5min |")
+        print("|---" * 8 + "|")
+        for _, line in sorted(ages):
+            print(line)
+        note(NOTE_AGE)
+        print()
 
     if not hists:
         print(f"No point has a TPS CV of {CV_BUCKETS:g}% or more.")

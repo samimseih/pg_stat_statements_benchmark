@@ -462,6 +462,29 @@ start_samplers() {
   ) >"$outdir/monitor_kind.tsv" 2>"$outdir/monitor_kind.err" &
   sampler_pids+=("$!")
 
+  # Entries of the view by how long ago they were created (stats_since), as
+  # a user sampling the view sees them, for the patch and upstream alike.
+  (
+    printf "%s\t%s\t%s\n" sample_epoch created count
+    sleep "$PGSS_SAMPLE_START_DELAY_SECONDS"
+    while true; do
+      sql_at -c "
+        select extract(epoch from clock_timestamp())::numeric(20,3),
+               case when age < interval '1 second' then '1:<1s'
+                    when age < interval '10 seconds' then '2:1-10s'
+                    when age < interval '1 minute' then '3:10s-1min'
+                    when age < interval '5 minutes' then '4:1-5min'
+                    else '5:>5min' end,
+               count(*)
+        from (select clock_timestamp() - stats_since as age
+              from pg_stat_statements(false)) s
+        group by 2 order by 2;" 2>/dev/null ||
+        true
+      sleep "$PGSS_SAMPLE_SECONDS"
+    done
+  ) >"$outdir/monitor_age.tsv" 2>"$outdir/monitor_age.err" &
+  sampler_pids+=("$!")
+
   (
     printf "%s\t%s\n" sample_epoch qtext_file_size
     sleep "$PGSS_SAMPLE_START_DELAY_SECONDS"
