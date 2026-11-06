@@ -19,7 +19,7 @@ The default benchmark target is:
 INSTANCE_TYPE=c7i.8xlarge
 AMI=AL2023 x86_64
 ACCESS=SSM
-PATCH_REF=samimseih/postgres:pg_stat_statements_v14
+PATCH_REF=samimseih/postgres:pg_stat_statements_custom_kind_only_v2
 BASE_REF=postgres/postgres:master
 ```
 

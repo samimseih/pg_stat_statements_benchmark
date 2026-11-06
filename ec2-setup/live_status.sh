@@ -71,7 +71,7 @@ cat >"$commands_file" <<JSON
     "summary='$summary'",
     "log_file='$log_file'",
     "repo='/home/ec2-user/pgss-benchmark/postgres'",
-    "patch_ref='${PATCH_COMMIT:-samimseih/${PATCH_REF:-pg_stat_statements_v14}}'",
+    "patch_ref='${PATCH_COMMIT:-samimseih/${PATCH_REF:-pg_stat_statements_custom_kind_only_v2}}'",
     "base_ref='${BASE_COMMIT:-origin/${BASE_REF:-master}}'",
     "expected_points='$expected_points'",
     "verbose='${LIVE_VERBOSE:-0}'",
