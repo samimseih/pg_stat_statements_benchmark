@@ -924,11 +924,16 @@ run_interleaved_select_only_point() {
 
 # The numbers of clients of all workloads, ascending, or with
 # CLIENT_ORDER=outside_in alternating the smallest and the largest left, so
-# that both ends of the range have results early.
+# that both ends of the range have results early, or with CLIENT_ORDER=listed
+# in the order of CLIENTS, then of SELECT_CLIENTS.
 interleaved_clients() {
   local -a sorted
   local lo hi
 
+  if [[ "$CLIENT_ORDER" == listed ]]; then
+    printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | awk '!seen[$0]++'
+    return
+  fi
   mapfile -t sorted < <(printf '%s\n' "${CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu)
   if [[ "$CLIENT_ORDER" != outside_in ]]; then
     printf '%s\n' "${sorted[@]}"
@@ -995,10 +1000,10 @@ main() {
   local i
 
   case "$CLIENT_ORDER" in
-    ascending|outside_in)
+    ascending|outside_in|listed)
       ;;
     *)
-      die "CLIENT_ORDER must be ascending or outside_in"
+      die "CLIENT_ORDER must be ascending, outside_in or listed"
       ;;
   esac
 

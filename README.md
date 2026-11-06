@@ -199,7 +199,9 @@ each commit once into a commit-specific install prefix, then runs the workloads
 back to back for each number of clients, alternating commits for each point,
 with a fresh `initdb` for each point.  The numbers of clients run in ascending
 order, or with `CLIENT_ORDER=outside_in` alternate the smallest and largest
-left (1, 512, 2, 256, ...), so that both ends of the range have results early.
+left (1, 512, 2, 256, ...), so that both ends of the range have results early,
+or with `CLIENT_ORDER=listed` follow the order of `CLIENTS`, then of
+`SELECT_CLIENTS`.
 
 Defaults:
 
