@@ -88,18 +88,27 @@ runuser -l ec2-user -c "mkdir -p '$WORK_ROOT' '$PREFIX' '$RESULT_ROOT'"
 runuser -l ec2-user -c "
   set -Eeuo pipefail
   cd '$WORK_ROOT'
-  git clone '$PG_REMOTE' postgres
+  if [[ ! -d postgres ]]; then
+    git clone '$PG_REMOTE' postgres
+    git -C postgres remote add samimseih '$PATCH_REMOTE'
+  fi
   cd postgres
-  git remote add samimseih '$PATCH_REMOTE'
-  git fetch origin '$BASE_REF:refs/remotes/origin/$BASE_REF'
-  git fetch samimseih '$PATCH_REF:refs/remotes/samimseih/$PATCH_REF'
-  meson setup build-release \
-    --prefix='$PREFIX/pghome/dev' \
-    --buildtype=release \
-    -Db_ndebug=true \
-    -Dcassert=false
+  git fetch origin '+$BASE_REF:refs/remotes/origin/$BASE_REF'
+  git fetch samimseih '+$PATCH_REF:refs/remotes/samimseih/$PATCH_REF'
+  if [[ ! -d build-release ]]; then
+    meson setup build-release \
+      --prefix='$PREFIX/pghome/dev' \
+      --buildtype=release \
+      -Db_ndebug=true \
+      -Dcassert=false
+  fi
   cd '$WORK_ROOT'
-  git clone '$BENCHMARK_REPO' pg_stat_statements_benchmark
+  if [[ -d pg_stat_statements_benchmark ]]; then
+    git -C pg_stat_statements_benchmark fetch origin
+    git -C pg_stat_statements_benchmark reset --hard origin/HEAD
+  else
+    git clone '$BENCHMARK_REPO' pg_stat_statements_benchmark
+  fi
 "
 
 cat >"$WORK_ROOT/profile_pgss.sh" <<'EOF'
