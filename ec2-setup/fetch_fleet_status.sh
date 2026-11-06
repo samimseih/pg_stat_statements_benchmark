@@ -6,7 +6,9 @@
 # For each instance type, this saves summary.tsv and progress.tsv as
 # <type>.summary.tsv and <type>.progress.tsv, from the instance through SSM
 # and S3 while it runs, or from its results archive once done, and adds a
-# row to instances.tsv: type, vCPUs, state, run id and commits.
+# row to instances.tsv: type, vCPUs, state, run id and commits.  It also
+# saves <type>.kind.tsv, the entries allocated by the stats kind of each
+# point, see summarize_kind.sh.
 #
 # Usage:
 #   ./fetch_fleet_status.sh <fleet id>
@@ -28,12 +30,13 @@ mkdir -p "$out"
 # Copy the summary and progress of a running instance to S3 with SSM, and
 # fetch them from there, because SSM truncates the output of commands.
 fetch_running() {
-  local instance_id="$1" run_id="$2" type="$3" uri params command_id root
+  local instance_id="$1" run_id="$2" type="$3" uri params command_id root kind_script
 
   uri="s3://$RESULT_BUCKET/$RESULT_PREFIX/$run_id/live"
   root="/home/ec2-user/pgss-benchmark/results/$run_id"
+  kind_script="$(base64 -w0 "$SCRIPT_DIR/summarize_kind.sh")"
   params="$(python3 -c 'import json, sys; print(json.dumps({"commands": [sys.argv[1]]}))' \
-    "for f in summary.tsv progress.tsv; do [ -f $root/\$f ] && aws s3 cp --only-show-errors $root/\$f $uri/\$f; done; true")"
+    "echo $kind_script | base64 -d >/tmp/summarize_kind.sh; bash /tmp/summarize_kind.sh $root >$root/kind.tsv; for f in summary.tsv progress.tsv kind.tsv; do [ -f $root/\$f ] && aws s3 cp --only-show-errors $root/\$f $uri/\$f; done; true")"
   command_id="$(aws_cmd ssm send-command \
     --instance-ids "$instance_id" \
     --document-name AWS-RunShellScript \
@@ -45,6 +48,8 @@ fetch_running() {
     : >"$out/$type.summary.tsv"
   aws_cmd s3 cp --only-show-errors "$uri/progress.tsv" "$out/$type.progress.tsv" ||
     : >"$out/$type.progress.tsv"
+  aws_cmd s3 cp --only-show-errors "$uri/kind.tsv" "$out/$type.kind.tsv" ||
+    : >"$out/$type.kind.tsv"
 }
 
 # Fetch the summary and progress of a finished run from its results archive.
@@ -66,6 +71,8 @@ fetch_done() {
   else
     : >"$out/$type.progress.tsv"
   fi
+  tar -xzf "$tmp/results.tar.gz" -C "$tmp" --wildcards "$run_id/*/monitor_kind.tsv" 2>/dev/null
+  bash "$SCRIPT_DIR/summarize_kind.sh" "$tmp/$run_id" >"$out/$type.kind.tsv"
   rm -rf "$tmp"
 }
 
@@ -97,6 +104,7 @@ for env_file in "$STATE_DIR/$FLEET_ID"-*.env; do
     else
       : >"$out/$type.summary.tsv"
       : >"$out/$type.progress.tsv"
+      : >"$out/$type.kind.tsv"
     fi
 
     vcpus="$(aws_cmd ec2 describe-instance-types --instance-types "$type" \

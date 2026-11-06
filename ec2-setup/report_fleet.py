@@ -43,6 +43,13 @@ commit, without the patch).
   steady state; dip recovered is a hiccup.
 - **Entries min/avg/max:** sampled number of pg_stat_statements entries;
   the max may slightly exceed pg_stat_statements.max with the patch.
+- **Entries are rows of the view**, which hides entries not executed yet
+  according to their counters: with the patch, counts are pending until
+  flushed, so the newest entries are missing from the samples.
+- **Allocated entries min/avg/max, patch:** entry_count of the stats kind in
+  pg_stat_kind_info, which counts every allocated entry, including evicted
+  ones not freed yet because a backend still references them.  Upstream has
+  no such count.
 - **Popular kept (min):** fewest of the 4000 popular statements present in
   a sample; 4000 means eviction never removed a popular one.  n/a for
   select_only, which runs few statements.
@@ -143,6 +150,8 @@ def main():
         summ = {(r["commit"], r["workload"], int(r["clients"])): r
                 for r in read_tsv(os.path.join(d, f"{t}.summary.tsv"))
                 if r.get("tps")}
+        kind = {(r["commit"][:12], r["workload"], int(r["clients"])): r
+                 for r in read_tsv(os.path.join(d, f"{t}.kind.tsv"))}
         print(f"| {t} | {inst['vcpus']} | {inst['state']} "
               f"| {len(summ)} / {expected} |")
         st = stability(os.path.join(d, f"{t}.progress.tsv"))
@@ -164,6 +173,8 @@ def main():
                  if p else "-"),
                 (f"{b['min_entries']}/{b['avg_entries']}/{b['max_entries']}"
                  if b else "-"),
+                ((lambda a: f"{a['min_allocated']}/{a['avg_allocated']}/{a['max_allocated']}"
+                  if a else "-")(kind.get((patch, w, c)))),
                 ("n/a" if w == "select_only"
                  else pair(p, b, lambda r: r["min_pop_entries"])),
                 pair(p, b, lambda r: f"{float(r['max_qtext_file_size']) / 1048576:.2f}"),
@@ -189,8 +200,9 @@ def main():
           "| TPS stddev patch / upstream | TPS CV patch / upstream | Sample TPS min-max patch / upstream "
           "| TPS trend patch / upstream "
           "| Entries min/avg/max, patch | Entries min/avg/max, upstream "
+          "| Allocated entries min/avg/max, patch "
           "| Popular kept (min) patch / upstream | Text storage max MB patch / upstream | Failed patch / upstream |")
-    print("|---" * 14 + "|")
+    print("|---" * 15 + "|")
     for _, line in sorted(rows):
         print(line)
     note(NOTE_MAIN)
