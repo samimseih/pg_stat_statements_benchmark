@@ -197,6 +197,8 @@ render_user_data() {
     write_env_var RUN_TRICKLE_5000 "${RUN_TRICKLE_5000:-0}"
     write_env_var TRICKLE_CLIENTS "${TRICKLE_CLIENTS:-32}"
     write_env_var TRICKLE_SECONDS "${TRICKLE_SECONDS:-300}"
+    write_env_var TRICKLE_RATE "${TRICKLE_RATE:-1}"
+    write_env_var TRICKLE_RESIDENTS "${TRICKLE_RESIDENTS:-5000}"
     write_env_var RUN_ORDER "$RUN_ORDER"
     write_env_var CLIENT_ORDER "$CLIENT_ORDER"
     write_env_var PGSS_SAMPLE_SECONDS "$PGSS_SAMPLE_SECONDS"
