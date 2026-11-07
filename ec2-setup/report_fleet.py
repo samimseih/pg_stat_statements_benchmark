@@ -94,6 +94,13 @@ Buckets are relative to the median, so they compare across TPS levels; they
 do not show when samples happened, which the trend does."""
 
 
+NOTE_TRICKLE = """\
+**How to read this:** 5000 resident statements keep pg_stat_statements.max
+full while batches of new statements arrive, each run once a second after
+it arrives.  Kept is the share of the new statements introduced so far that
+the view shows.  Similar shares for the patch and upstream mean new
+statements stick as well under slow churn."""
+
 NOTE_AGE = """\
 **How to read this:** what a user sampling the view sees.  Older buckets
 hold the long-lived entries, mostly hot ones, and should match.  The youngest
@@ -151,7 +158,7 @@ def main():
     if not instances:
         sys.exit(f"error: no instances.tsv in {d}, run fetch_fleet_status.sh")
 
-    rows, hists, profiles, ages = [], [], [], []
+    rows, hists, profiles, ages, trickles = [], [], [], [], []
     age_buckets = ["1:<1s", "2:1-10s", "3:10s-1min", "4:1-5min", "5:>5min"]
     print("| Instance | vCPUs | State | Points done |")
     print("|---|---:|---|---:|")
@@ -169,6 +176,10 @@ def main():
                 if r.get("tps")}
         kind = {(r["commit"][:12], r["workload"], int(r["clients"])): r
                  for r in read_tsv(os.path.join(d, f"{t}.kind.tsv"))}
+        for r in read_tsv(os.path.join(d, f"{t}.trickle.tsv")):
+            r["_type"], r["_rank"] = t, rank
+            r["_role"] = "patch" if r["commit"][:12] == patch else "upstream"
+            trickles.append(r)
         age = {}
         for r in read_tsv(os.path.join(d, f"{t}.age.tsv")):
             age.setdefault((r["commit"][:12], r["workload"], int(r["clients"])),
@@ -256,6 +267,18 @@ def main():
     else:
         print("All points are steady over time.")
     print()
+
+    if trickles:
+        print("trickle_5000: new statements introduced while pg_stat_statements.max "
+              "is full, and the share the view showed.")
+        print()
+        print("| Clients | Instance | Build | Introduced | Kept, average | Kept, at the end | Average age at the end |")
+        print("|---" * 7 + "|")
+        for r in sorted(trickles, key=lambda r: (int(r["clients"]), r["_rank"], r["_role"])):
+            print(f"| {r['clients']} | {r['_type']} | {r['_role']} | {r['introduced']} "
+                  f"| {r['avg_kept_pct']}% | {r['final_kept_pct']}% | {r['final_avg_age_s']} s |")
+        note(NOTE_TRICKLE)
+        print()
 
     if ages:
         print("Entries of the view by how long ago they were created "

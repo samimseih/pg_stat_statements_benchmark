@@ -48,6 +48,14 @@ PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
 RUN_HOTCOLD_4000_100M="${RUN_HOTCOLD_4000_100M:-1}"
 RUN_HOTCOLD_4000_1500="${RUN_HOTCOLD_4000_1500:-1}"
 RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
+# trickle_5000: 5000 resident statements keep pg_stat_statements.max full,
+# while TRICKLE_BATCH new statements arrive every TRICKLE_INTERVAL seconds,
+# each run once a second afterwards, to see whether new statements stick.
+RUN_TRICKLE_5000="${RUN_TRICKLE_5000:-0}"
+TRICKLE_CLIENTS=(${TRICKLE_CLIENTS:-32})
+TRICKLE_SECONDS="${TRICKLE_SECONDS:-300}"
+TRICKLE_INTERVAL="${TRICKLE_INTERVAL:-20}"
+TRICKLE_BATCH="${TRICKLE_BATCH:-10}"
 RUN_ORDER="${RUN_ORDER:-commit_major}"
 CLIENT_ORDER="${CLIENT_ORDER:-ascending}"
 
@@ -496,6 +504,46 @@ start_samplers() {
   sampler_pids+=("$!")
 }
 
+# Introduce TRICKLE_BATCH new statements every TRICKLE_INTERVAL seconds, and
+# run every statement introduced so far once a second, recording how many
+# were introduced in trickle_introduced, and sample how many of them the view
+# shows, with their average age.
+start_trickle() {
+  local outdir="$1"
+
+  echo 0 >"$outdir/trickle_introduced"
+  (
+    local start batch=0 i b sql
+    start=$(date +%s)
+    while true; do
+      if (( $(date +%s) - start >= (batch + 1) * TRICKLE_INTERVAL )); then
+        batch=$((batch + 1))
+        echo $((batch * TRICKLE_BATCH)) >"$outdir/trickle_introduced"
+      fi
+      sql=""
+      for ((b = 1; b <= batch; b++)); do
+        for ((i = 1; i <= TRICKLE_BATCH; i++)); do
+          sql+="WITH CTENEW_${b}_${i} AS MATERIALIZED (SELECT 1 AS v) SELECT v FROM CTENEW_${b}_${i};"$'\n'
+        done
+      done
+      [[ -n "$sql" ]] && sql_at <<<"$sql" >/dev/null 2>&1
+      sleep 1
+    done
+  ) >"$outdir/trickle.err" 2>&1 &
+  sampler_pids+=("$!")
+
+  (
+    printf "%s\t%s\t%s\t%s\n" sample_epoch introduced present avg_age_s
+    while true; do
+      printf "%s\t%s\t%s\n" "$(date +%s)" "$(cat "$outdir/trickle_introduced")" \
+        "$(sql_at -c "select count(*), coalesce(extract(epoch from avg(clock_timestamp() - stats_since))::numeric(10,1), 0)
+                      from pg_stat_statements(true) where query like 'WITH CTENEW_%'" 2>/dev/null)"
+      sleep "$PGSS_SAMPLE_SECONDS"
+    done
+  ) >"$outdir/monitor_trickle.tsv" 2>"$outdir/monitor_trickle.err" &
+  sampler_pids+=("$!")
+}
+
 stop_samplers() {
   if ((${#sampler_pids[@]})); then
     kill "${sampler_pids[@]}" 2>/dev/null || true
@@ -859,6 +907,7 @@ run_pgbench_capture() {
 
   reset_pgss
   start_samplers "$outdir"
+  [[ "$workload" == trickle_5000 ]] && start_trickle "$outdir"
   set +e
   "$@" -c "$clients" -j "$threads" -T "$duration" "$PGDATABASE" >"$outdir/pgbench.log" 2>&1
   status="$?"
@@ -959,11 +1008,11 @@ interleaved_clients() {
 
   if [[ "$CLIENT_ORDER" == listed ]]; then
     printf '%s\n' "${CLIENTS[@]}" "${HOTCOLD_100M_CLIENTS[@]}" \
-      "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | awk '!seen[$0]++'
+      "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" "${TRICKLE_CLIENTS[@]}" | awk '!seen[$0]++'
     return
   fi
   mapfile -t sorted < <(printf '%s\n' "${HOTCOLD_100M_CLIENTS[@]}" \
-    "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" | sort -nu)
+    "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" "${TRICKLE_CLIENTS[@]}" | sort -nu)
   if [[ "$CLIENT_ORDER" != outside_in ]]; then
     printf '%s\n' "${sorted[@]}"
     return
@@ -998,6 +1047,23 @@ run_interleaved() {
     if [[ "$RUN_SELECT_ONLY" == "1" && " ${SELECT_CLIENTS[*]} " == *" $clients "* ]]; then
       run_interleaved_select_only_point "$clients"
     fi
+    if [[ "$RUN_TRICKLE_5000" == "1" && " ${TRICKLE_CLIENTS[*]} " == *" $clients "* ]]; then
+      run_interleaved_trickle_point "$clients"
+    fi
+  done
+}
+
+run_interleaved_trickle_point() {
+  local clients="$1"
+  local commit short_commit
+
+  for commit in "${COMMITS[@]}"; do
+    short_commit="${COMMIT_SHORT_NAME[$commit]}"
+    start_prepared_commit "$commit"
+    echo "==> $short_commit trickle_5000 clients=$clients"
+    run_pgbench_capture "$short_commit" trickle_5000 "$clients" "$TRICKLE_SECONDS" \
+      "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
+      -P "$PROGRESS_SECONDS" -f "$SCRIPT_DIR/pgbench_trickle_5000.sql"
   done
 }
 

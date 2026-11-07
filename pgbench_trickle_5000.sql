@@ -1,0 +1,2 @@
+\set id random(1, 5000)
+WITH CTEPOP_:id AS MATERIALIZED (SELECT :id::int AS v) SELECT v FROM CTEPOP_:id;
