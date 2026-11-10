@@ -1,0 +1,8 @@
+results/
+*.log
+*.out
+*.err
+*.tsv
+tags
+local/work/
+__pycache__/

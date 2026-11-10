@@ -1,0 +1,13 @@
+aws.config
+*.local
+*.log
+*.pem
+*.key
+*.json
+*.env
+*.state.env
+*.user-data.sh
+*.results.tar.gz
+*.cloud-init.log
+state/
+results/
