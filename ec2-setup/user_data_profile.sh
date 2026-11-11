@@ -104,7 +104,8 @@ runuser -l ec2-user -c "
       --prefix='$PREFIX/pghome/dev' \
       --buildtype=release \
       -Db_ndebug=true \
-      -Dcassert=false
+      -Dcassert=false \
+      ${PROFILE_FRAME_POINTERS:+-Dc_args=-fno-omit-frame-pointer}
   fi
   cd '$WORK_ROOT'
   if [[ -d pg_stat_statements_benchmark ]]; then
@@ -129,9 +130,14 @@ PROFILE_SECONDS="${PROFILE_SECONDS:-150}"
 PROFILE_WARMUP_SECONDS="${PROFILE_WARMUP_SECONDS:-20}"
 PROFILE_RECORD_SECONDS="${PROFILE_RECORD_SECONDS:-90}"
 PROFILE_WORKLOAD="${PROFILE_WORKLOAD:-hotcold_4000_100m}"
-# With PROFILE_INTERVAL_SECONDS, record PROFILE_RECORD_SECONDS of perf every
-# PROFILE_INTERVAL_SECONDS for the whole run, to compare phases of a run
+# PROFILE_INTERVAL_SECONDS: a perf window that often
 PROFILE_INTERVAL_SECONDS="${PROFILE_INTERVAL_SECONDS:-}"
+# PROFILE_FRAME_POINTERS=1: callers in perf
+PROFILE_FRAME_POINTERS="${PROFILE_FRAME_POINTERS:-}"
+# PROFILE_PGSS=0: no pgss; PROFILE_WORKLOAD=select1: SELECT 1
+PROFILE_PGSS="${PROFILE_PGSS:-1}"
+# PROFILE_PERF=0: no perf
+PROFILE_PERF="${PROFILE_PERF:-1}"
 PGSS_MAX="${PGSS_MAX:-5000}"
 MAX_CONNECTIONS="${MAX_CONNECTIONS:-300}"
 
@@ -166,10 +172,16 @@ sql_at() {
 }
 
 reset_pgss() {
+  [[ "$PROFILE_PGSS" == 0 ]] && return 0
   sql -q -c "select pg_stat_statements_reset();" >/dev/null
 }
 
 configure_cluster() {
+  if [[ "$PROFILE_PGSS" == 0 ]]; then
+    sql -c "ALTER SYSTEM SET max_connections = '$MAX_CONNECTIONS';"
+    "$PGHOME/bin/pg_ctl" -D "$PGDATA" -m fast -w -l "$PGDATA/logfile" restart
+    return 0
+  fi
   sql <<SQL
 ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements';
 ALTER SYSTEM SET pg_stat_statements.max = '$PGSS_MAX';
@@ -232,6 +244,8 @@ stop_wait_sampler() {
 
 capture_pgss() {
   local outdir="$1"
+
+  [[ "$PROFILE_PGSS" == 0 ]] && return 0
 
   sql_at -c "
     select count(*), coalesce(sum(calls), 0)
@@ -302,15 +316,19 @@ run_point() {
       -P 2 -c "$clients" -j "$threads" -T "$PROFILE_SECONDS" "$PGDATABASE" \
       >"$outdir/pgbench.log" 2>&1 &
   else
+    script="$BENCHMARK_DIR/pgbench_${PROFILE_WORKLOAD/hotcold/hot_cold}.sql"
+    if [[ "$PROFILE_WORKLOAD" == select1 ]]; then
+      script="$outdir/select1.sql"
+      echo "SELECT 1;" >"$script"
+    fi
     "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -n -M simple \
-      -P 2 -f "$BENCHMARK_DIR/pgbench_${PROFILE_WORKLOAD/hotcold/hot_cold}.sql" \
+      -P 2 -f "$script" \
       -c "$clients" -j "$threads" -T "$PROFILE_SECONDS" "$PGDATABASE" \
       >"$outdir/pgbench.log" 2>&1 &
   fi
   pgbench_pid="$!"
 
-  # The CPU and NUMA memory of the run, every 30 s: vmstat, the numastat of
-  # the postgres processes, and the NUMA hits and misses of each node
+  # vmstat, and NUMA memory every 30 s
   vmstat -t 1 >"$outdir/vmstat.log" 2>&1 &
   vmstat_pid="$!"
   (
@@ -323,22 +341,29 @@ run_point() {
   numastat_pid="$!"
 
   sleep "$PROFILE_WARMUP_SECONDS"
-  if ! command -v perf >/dev/null 2>&1; then
+  if [[ "$PROFILE_PERF" == 0 ]]; then
+    :
+  elif ! command -v perf >/dev/null 2>&1; then
     echo "perf not installed" >"$outdir/perf_record.err"
   elif [[ -n "$PROFILE_INTERVAL_SECONDS" ]]; then
-    # A window every PROFILE_INTERVAL_SECONDS while pgbench runs, named by
-    # its start in seconds into the run
     window=0
+    report_pids=()
     while kill -0 "$pgbench_pid" 2>/dev/null; do
       at=$((PROFILE_WARMUP_SECONDS + window * PROFILE_INTERVAL_SECONDS))
       perf record -F 99 -g -a -o "$outdir/perf-$at.data" -- sleep "$PROFILE_RECORD_SECONDS" \
         >>"$outdir/perf_record.out" 2>>"$outdir/perf_record.err"
-      perf report -i "$outdir/perf-$at.data" --stdio --no-children \
-        --sort comm,dso,symbol >"$outdir/perf_report_flat-$at.txt" 2>>"$outdir/perf_report_flat.err" &
+      (
+        perf report -i "$outdir/perf-$at.data" --stdio --no-children \
+          --sort comm,dso,symbol >"$outdir/perf_report_flat-$at.txt"
+        perf report -i "$outdir/perf-$at.data" --stdio --no-children --sort symbol \
+          --symbols=LWLockAcquire,LWLockRelease,LWLockAttemptLock \
+          --call-graph=caller,0.5,callee,function,percent >"$outdir/perf_lwlock-$at.txt"
+      ) 2>>"$outdir/perf_report_flat.err" &
+      report_pids+=("$!")
       window=$((window + 1))
       sleep $((PROFILE_INTERVAL_SECONDS - PROFILE_RECORD_SECONDS))
     done
-    wait
+    wait "${report_pids[@]}"
   else
     perf record -F 99 -g -a -o "$outdir/perf.data" -- sleep "$PROFILE_RECORD_SECONDS" \
       >"$outdir/perf_record.out" 2>"$outdir/perf_record.err"
@@ -386,6 +411,10 @@ main() {
   for spec in "${commit_specs[@]}"; do
     label="${spec%%=*}"
     commit="${spec#*=}"
+    # label-nopgss: no pgss
+    PROFILE_PGSS=1
+    [[ "$label" == *-nopgss ]] && PROFILE_PGSS=0
+    [[ "${PROFILE_PGSS_DEFAULT:-1}" == 0 ]] && PROFILE_PGSS=0
     build_commit "$commit"
     if [[ "$PROFILE_WORKLOAD" == select_only ]]; then
       "$PGBENCH" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -i -s 10 "$PGDATABASE" \
@@ -420,6 +449,9 @@ runuser -l ec2-user -c "
     PROFILE_WARMUP_SECONDS='$PROFILE_WARMUP_SECONDS' \
     PROFILE_RECORD_SECONDS='$PROFILE_RECORD_SECONDS' \
     PROFILE_INTERVAL_SECONDS='${PROFILE_INTERVAL_SECONDS:-}' \
+    PROFILE_FRAME_POINTERS='${PROFILE_FRAME_POINTERS:-}' \
+    PROFILE_PGSS_DEFAULT='${PROFILE_PGSS:-1}' \
+    PROFILE_PERF='${PROFILE_PERF:-1}' \
     PROFILE_WORKLOAD='${PROFILE_WORKLOAD:-hotcold_4000_100m}' \
     PGSS_MAX='$PGSS_MAX' \
     MAX_CONNECTIONS='$MAX_CONNECTIONS' \

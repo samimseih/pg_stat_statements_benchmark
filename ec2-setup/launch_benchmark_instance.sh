@@ -212,6 +212,9 @@ render_user_data() {
     write_env_var PROFILE_WARMUP_SECONDS "$PROFILE_WARMUP_SECONDS"
     write_env_var PROFILE_RECORD_SECONDS "$PROFILE_RECORD_SECONDS"
     write_env_var PROFILE_INTERVAL_SECONDS "${PROFILE_INTERVAL_SECONDS:-}"
+    write_env_var PROFILE_FRAME_POINTERS "${PROFILE_FRAME_POINTERS:-}"
+    write_env_var PROFILE_PGSS "${PROFILE_PGSS:-1}"
+    write_env_var PROFILE_PERF "${PROFILE_PERF:-1}"
     write_env_var PROFILE_WORKLOAD "${PROFILE_WORKLOAD:-hotcold_4000_100m}"
   } >"$env_file"
 

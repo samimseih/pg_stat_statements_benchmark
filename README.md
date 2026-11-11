@@ -19,13 +19,14 @@ it, and ask, for example:
 > Benchmark commit A against upstream C locally, 32 vCPUs, 1, 32 and 256
 > clients.
 
-It writes the results as a page under `reports/`, listed below.
+It writes the results as a Markdown page with every point of every run; the
+published ones are listed below.
 
 ## Published results
 
 | date | patches | machines | results |
 | --- | --- | --- | --- |
-| 2026-11-10 | 0003 `5a0d289` (texts in file), 0004 `7739f4e` (texts in memory), on upstream `ee7cfb9` | c7i.8xlarge, c7i.24xlarge, c7i.48xlarge; 300 s per point, 1 to 512 clients | [Run 1](reports/2026-11-10-run-1.md) (in progress) |
+| 2026-11-11 | 0003 `5a0d289` (texts in file), 0004 `7739f4e` (texts in memory), on upstream `ee7cfb9` (now `2231a2e` and `bf75591` on [pg_stat_statements_custom_kind_dsa_qtext](https://github.com/samimseih/postgres/tree/pg_stat_statements_custom_kind_dsa_qtext)), and core without pg_stat_statements | c7i.large, 2xlarge, 8xlarge, 24xlarge, 48xlarge; 5 min per point, 1 to 512 clients; long runs of 20 and 45 min | [results](reports/2026-11-11-results.md) |
 
 ## Claude Skill
 
@@ -40,5 +41,6 @@ What the skill runs, which can also be run directly:
   running `run_pgss_benchmark_suite.sh` and uploading its results to S3;
   `ec2-setup/fetch_fleet_status.sh` fetches them.  See `ec2-setup/README.md`.
 - Report: `report_datapoints.py local <results>` or
-  `report_datapoints.py fleet ec2-setup/results/fleet/<fleet>`, with
-  `--markdown <title>` for a page under `reports/`.
+  `report_datapoints.py fleet ec2-setup/results/fleet/<fleet>` while runs
+  go; `report_page.py` for the results page of finished runs, after
+  `ec2-setup/fetch_archives.sh` fetches their archives.

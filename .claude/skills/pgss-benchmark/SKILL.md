@@ -7,8 +7,8 @@ description: Benchmark pg_stat_statements patch commits against upstream Postgre
 
 Compare patch commits against upstream under statement churn, and report the
 same datapoints for every point, so that results from different people and
-machines can be compared.  Results are shared by pasting the report, not
-committed to this repository.
+machines can be compared.  The skill writes the results as a Markdown page;
+publishing it, and saying what it shows, is the user's call.
 
 ## Workloads
 
@@ -125,6 +125,28 @@ ask.  In `ec2-setup/`:
    Only ever stop or terminate instances listed there, and only those of
    this fleet; tell the user about any instance still running.
 
+## 2c. Control runs and profiles
+
+To show what the machine does without pg_stat_statements, or where the
+time goes, launch one instance with the profile script instead of the
+suite (`launch_benchmark_instance.sh` with
+`USER_DATA_TEMPLATE=$PWD/user_data_profile.sh`):
+
+- `PROFILE_COMMITS="core-nopgss=<upstream> upstream=<upstream> memory=<patch>"`:
+  the builds, run back to back on the same instance; a label ending in
+  `-nopgss` runs without pg_stat_statements.
+- `PROFILE_WORKLOAD` (`hotcold_4000_1500`, `hotcold_4000_100m`,
+  `select_only`, or `select1` for `SELECT 1`), `PROFILE_CLIENTS`,
+  `PROFILE_SECONDS`.
+- `PROFILE_PERF=0` for throughput without perf; else `PROFILE_INTERVAL_SECONDS`
+  and `PROFILE_RECORD_SECONDS` record perf windows over the run, and
+  `PROFILE_FRAME_POINTERS=1` builds with frame pointers so the reports have
+  callers.
+
+Results land in S3 under the run id, with TPS per build in
+`profile_summary.tsv`; these runs have TPS, waits and vmstat over time, not
+the pg_stat_statements datapoints of the suite.
+
 ## 3. Report
 
 `report_datapoints.py` prints one line per build and point:
@@ -161,24 +183,35 @@ loses popular statements, or reaches the backstop; then the overall picture per
 machine and workload.  Compare builds only within a point, and only between
 runs of the same machine.
 
-## Publishing the results
+## Writing the results page
 
-Once the run is done (or earlier, if the user asks, marked in progress),
-write the page and add it to the table of `README.md`, under "Published
-results":
+Once the runs are done, write one Markdown page with every point of every
+run, data only: no conclusions on the page, the user draws those.
 
-```sh
-python3 report_datapoints.py fleet ec2-setup/results/fleet/<fleet> \
-  <hash>="<label>" ... --markdown "<title>" > reports/<date>-<name>.md
-```
+1. Fetch the archives of the runs, which hold the wait events and the
+   per-point files (into `ec2-setup/results/archive/`, ignored by git):
+   ```sh
+   cd ec2-setup
+   ./fetch_archives.sh <run id>...   # a fleet's run ids are in its instances.tsv
+   ```
+2. Write the page, with a label per patch commit, the fleets, and the
+   profile runs comparing builds on one instance (control runs):
+   ```sh
+   python3 report_page.py --title "<title>" [--header <notes.md>] \
+     --label <hash>=0003 --label <hash>=0004 \
+     --fleet ec2-setup/results/fleet/<fleet> ... \
+     --compare "<profile run id>=<instance type>" ... \
+     > reports/<date>-results.md
+   ```
+   `--header` adds notes under the commit table, such as how the commits
+   map to the branch.  For each point the page has a throughput table and
+   an eviction table, one row per build, narrow enough not to scroll, then
+   TPS by fifth of the run and the entries by recency as text histograms.
+3. Show the user the page, and where it is.  Do not commit or push it, nor
+   edit `README.md`, unless the user asks.  If the user asks to publish it,
+   never commit `aws.config`, `state/`, `results/` or `local/work/`, and
+   check the diff for account IDs, AWS profile names, host names and
+   instance IDs first.
 
-The page has the settings, the datapoints explained, a summary of the
-ratios and TPS trends, every datapoint of every point, the TPS of each
-fifth of the run behind each TPS trend, and histograms of
-the entries retained by recency.  (`local <results file>` for a local run; then add the machine, its vCPUs
-and CPU model, and the seconds per run to the page's settings table by
-hand.)  Only the page and the README change: never commit `aws.config`,
-`state/`, `results/` or `local/work/`.  Before committing, check the diff
-for account IDs, AWS profile names, host names and instance IDs, and show
-the user the page; push only when the user says so.  Then the link to the
-page, with a few lines on what it shows, is what goes in the thread.
+`report_datapoints.py` stays the quick view while runs are going (one line
+per build and point); `report_page.py` is for the finished runs.
