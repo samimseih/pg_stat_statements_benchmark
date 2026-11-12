@@ -26,6 +26,7 @@ published ones are listed below.
 
 | date | patches | machines | results |
 | --- | --- | --- | --- |
+| 2026-11-12 | v6, 0003 `f1b4dd3` (texts in file), 0004 `3498114` (texts in memory), on upstream `7a5559a` ([pg_stat_statements_custom_kind_dsa_qtext](https://github.com/samimseih/postgres/tree/pg_stat_statements_custom_kind_dsa_qtext)), and core without pg_stat_statements | c7i.large, 2xlarge, 8xlarge, 24xlarge, 48xlarge; 5 min per point, 1 to 512 clients; long runs of 20 and 45 min | [results](reports/2026-11-12-results-v6.md) |
 | 2026-11-11 | 0003 `5a0d289` (texts in file), 0004 `7739f4e` (texts in memory), on upstream `ee7cfb9` (now `2231a2e` and `bf75591` on [pg_stat_statements_custom_kind_dsa_qtext](https://github.com/samimseih/postgres/tree/pg_stat_statements_custom_kind_dsa_qtext)), and core without pg_stat_statements | c7i.large, 2xlarge, 8xlarge, 24xlarge, 48xlarge; 5 min per point, 1 to 512 clients; long runs of 20 and 45 min | [results](reports/2026-11-11-results.md) |
 
 ## Claude Skill
