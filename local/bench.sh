@@ -4,7 +4,7 @@
 # pinned to CPUs 0..vcpus-1 (server, pgbench and samplers); the builds of a
 # point run back to back, repeat after repeat.
 #
-# usage: UPSTREAM=<ref> [WORKLOADS="hc100m hc1500 sel"] [SECS=180] \
+# usage: UPSTREAM=<ref> [WORKLOADS="hc100m hc1500 hc50k sel"] [SECS=180] [MAX=5000] \
 #          bench.sh <name> <plan file> <ref>...
 # Run it detached:
 #   setsid nohup local/bench.sh ... > $PGSS_WORK/<name>.log 2>&1 < /dev/null &
@@ -14,6 +14,7 @@ PLAN=$(readlink -f "$2")
 L=$REPO/local
 NAME=$1; shift 2
 SECS=${SECS:-180}
+MAX=${MAX:-5000}
 WORKLOADS=${WORKLOADS:-hc100m}
 [ -n "${UPSTREAM:-}" ] || { echo "UPSTREAM is not set" >&2; exit 1; }
 ln -sfn "$($L/build.sh "$UPSTREAM")" inst-up || exit 1
@@ -31,7 +32,7 @@ grep -v '^#' "$PLAN" | while read -r v cl reps; do
   for r in $(seq 1 $reps); do
     for b in $BUILDS; do
       for wl in $WORKLOADS; do
-        line=$(taskset -c 0-$((v - 1)) $L/ab_run.sh $b $wl $cl $SECS 5000)
+        line=$(taskset -c 0-$((v - 1)) $L/ab_run.sh $b $wl $cl $SECS $MAX)
         echo "$line vcpus=$v rep=$r secs=$SECS" >> ${NAME}_results.txt
         $L/archive.sh
       done

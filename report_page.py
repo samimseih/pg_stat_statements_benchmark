@@ -12,6 +12,7 @@ archive have none.
 usage: report_page.py [--title <title>] [--header <markdown file>]
                       [--archives <dir>] [--label <hash>=<label>]...
                       [--fleet <fleet results dir>]...
+                      [--local <local results file>]...
                       [--compare <run id>=<title>]...  > page.md
 """
 import argparse
@@ -23,9 +24,9 @@ import statistics
 
 import report_datapoints as rd
 
-WLNAME = {'hc100m': 'hotcold_100m', 'hc1500': 'hotcold_1500', 'sel': 'select_only',
+WLNAME = {'hc100m': 'hotcold_100m', 'hc1500': 'hotcold_1500', 'hc50k': 'hotcold_50k', 'sel': 'select_only',
           'trickle': 'trickle_5000', 'select1': 'SELECT 1'}
-WLDIR = {'hc100m': 'hotcold_4000_100m', 'hc1500': 'hotcold_4000_1500',
+WLDIR = {'hc100m': 'hotcold_4000_100m', 'hc1500': 'hotcold_4000_1500', 'hc50k': 'hotcold_4000_50k',
          'sel': 'select_only', 'trickle': 'trickle_5000', 'select1': 'select1'}
 WLKEY = {v: k for k, v in WLDIR.items()}
 HEAD = ['build', 'TPS', 'speedup<br>over<br>upstream', '% of<br>no-pgss', 'CV', 'TPS<br>trend',
@@ -63,7 +64,8 @@ hotcold workloads the entries of the view by how long ago they were
 created.
 
 Workloads: hotcold_100m runs 4000 popular statements and 100 million others;
-hotcold_1500 runs 4000 popular statements and 1500 others; select_only runs
+hotcold_1500 runs 4000 popular statements and 1500 others; hotcold_50k runs
+4000 popular statements and 50000 others, shared across the backends; select_only runs
 pgbench `-S`; SELECT 1 is `SELECT 1;` with the simple protocol.
 """
 
@@ -152,6 +154,59 @@ def charts(point, names, wl):
     return out
 
 
+def point_rows(b, names, wl, wait):
+    """The table rows of one point, one per build; wait(name) is the path of
+    its wait events, or None."""
+    rows, up = [], b['upstream']
+    churn = wl not in ('sel', 'select1')
+    for n in names:
+        p, d = b[n], rd.datapoints(b[n], up, wl)
+        cv, tr = stats_of(p['progress'])
+        w = wait(n)
+        size, where = p['text']
+        rows.append([n, ktps(p['tps']), f"{p['tps'] / up['tps']:.1f}x", '', cv, trend(tr),
+                     d['alloc'] if n != 'upstream' else '', d['age'] if churn else '',
+                     d['popular'] if churn else '',
+                     vs(float(d['vs'][:-1])) if n != 'upstream' and d['vs'] != '-' else '',
+                     d['backstop'] if n != 'upstream' else '',
+                     f"{size / 1048576:.1f}MB{'<br>' + where if where else ''} / {d['notext']}",
+                     waits(w) if w else ''])
+    return rows
+
+
+def local_section(results, labels):
+    """The points of a local results file (local/bench.sh)."""
+    pts = rd.local([results], labels)
+    secs = {int(p['secs']) for b in pts.values() for p in b.values() if p['secs']}
+    length = ', '.join(f'{s} s' for s in sorted(secs))
+    tag = os.path.basename(results).replace('_results.txt', '')
+    out = [f'## Local run `{tag}`, {length} per build', '']
+    vcpus = lambda m: int(re.search(r'\((\d+) vCPUs\)', m).group(1))
+    cur = None
+    for key in sorted(pts, key=lambda x: (vcpus(x[0]), x[1], x[2])):
+        b = pts[key]
+        if 'upstream' not in b:
+            continue
+        if key[0] != cur:
+            cur = key[0]
+            out += [f'### {key[0]}', '']
+        names = ['upstream'] + sorted(n for n in b if n != 'upstream')
+        rows = point_rows(b, names, key[1], lambda n: None)
+        cl = f"{key[2]} client{'s' if key[2] > 1 else ''}"
+        out += block(f'{vcpus(key[0])} vCPUs · {WLNAME.get(key[1], key[1])}, {cl}', rows)
+        out += charts(b, names, key[1])
+    return out
+
+
+def local_commits(results, labels):
+    """The builds of a local results file, from its inst-* names."""
+    work = os.path.dirname(os.path.abspath(results))
+    up = os.path.basename(os.path.realpath(f'{work}/inst-up'))[5:]
+    seen = {x.split()[0] for x in open(results) if x.startswith('inst-')}
+    return [('upstream', up)] + sorted((labels.get(b[5:12], b[5:12]), b[5:12])
+                                       for b in seen if b != 'inst-up')
+
+
 def instances(fleet):
     return rd.tsv(f'{fleet}/instances.tsv')
 
@@ -180,21 +235,10 @@ def fleet_section(fleet, labels, archives):
             cur = inst
             out += [f'### {inst}, {vcpus(key[0])} vCPUs', '']
         names = ['upstream'] + sorted(n for n in b if n != 'upstream')
-        rows, up = [], b['upstream']
-        for n in names:
-            p, d = b[n], rd.datapoints(b[n], up, key[1])
-            cv, tr = stats_of(p['progress'])
-            hit = glob.glob(f"{archives}/{info['run_id']}/{info['run_id']}/"
-                            f"{commits.get(n, '')[:12]}*/{WLDIR[key[1]]}/c{key[2]}/waits.tsv")
-            size, where = p['text']
-            churn = key[1] not in ('sel',)
-            rows.append([n, ktps(p['tps']), f"{p['tps'] / up['tps']:.1f}x", '', cv, trend(tr),
-                         d['alloc'] if n != 'upstream' else '', d['age'] if churn else '',
-                         d['popular'] if churn else '',
-                         vs(float(d['vs'][:-1])) if n != 'upstream' and d['vs'] != '-' else '',
-                         d['backstop'] if n != 'upstream' else '',
-                         f"{size / 1048576:.1f}MB{'<br>' + where if where else ''} / {d['notext']}",
-                         waits(hit[0]) if hit else ''])
+        wait = lambda n: next(iter(glob.glob(
+            f"{archives}/{info['run_id']}/{info['run_id']}/"
+            f"{commits.get(n, '')[:12]}*/{WLDIR[key[1]]}/c{key[2]}/waits.tsv")), None)
+        rows = point_rows(b, names, key[1], wait)
         cl = f"{key[2]} client{'s' if key[2] > 1 else ''}"
         out += block(f'{inst} · {WLNAME.get(key[1], key[1])}, {cl}', rows)
         out += charts(b, names, key[1])
@@ -248,6 +292,7 @@ def main():
                                                        'ec2-setup', 'results', 'archive'))
     ap.add_argument('--label', action='append', default=[])
     ap.add_argument('--fleet', action='append', default=[])
+    ap.add_argument('--local', action='append', default=[])
     ap.add_argument('--compare', action='append', default=[])
     a = ap.parse_args()
     labels = {k[:7]: v for k, v in (x.split('=', 1) for x in a.label)}
@@ -258,11 +303,17 @@ def main():
             (labels.get(c[:7], c[:7]), c) for c in [i['patch_commit']] + i['extra_commits'].split()]
         out += ['| | |', '|:---:|:---:|'] + [f'| {n} | `{c[:7]}` |' for n, c in sorted(commits)]
         out += ['| no pgss | upstream, run without pg_stat_statements loaded |', '']
+    elif a.local:
+        commits = dict(c for f in a.local for c in local_commits(f, labels))
+        out += ['| | |', '|:---:|:---:|'] + [f'| {n} | `{c}` |' for n, c in sorted(commits.items())]
+        out += ['']
     if a.header:
         out += [open(a.header).read().rstrip(), '']
     out += [LEGEND]
     for f in a.fleet:
         out += fleet_section(f.rstrip('/'), labels, a.archives)
+    for f in a.local:
+        out += local_section(f, labels)
     if a.compare:
         out += ['## Builds back to back on one instance, with and without pg_stat_statements', '']
         for c in a.compare:

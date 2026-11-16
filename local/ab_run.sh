@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One run: a fresh cluster of <build>, a workload, then the result line.
-# usage: ab_run.sh <build> <hc100m|hc1500|sel> <clients> <seconds> <max>
+# usage: ab_run.sh <build> <hc100m|hc100midle|hc100midlenp|hc1500|hc50k|hc80k100m|hc80k1m|sel> <clients> <seconds> <max>
 set -uo pipefail
 . "$(dirname "$(readlink -f "$0")")/common.sh"
 BUILD=$1; MODE=$2; CL=$3; SECS=$4; MAX=$5
@@ -50,10 +50,45 @@ if [ $MODE = sel ]; then
 else
   SQL=$REPO/pgbench_hot_cold_4000_1500.sql
   [ $MODE = hc100m ] && SQL=$REPO/pgbench_hot_cold_4000_100m.sql
+  [ $MODE = hc50k ] && SQL=$REPO/pgbench_hot_cold_4000_50k.sql
+  # 80000 popular statements, for pg_stat_statements.max=100000
+  [ $MODE = hc80k100m ] && SQL=$REPO/pgbench_hot_cold_80k_100m.sql
+  [ $MODE = hc80k1m ] && SQL=$REPO/pgbench_hot_cold_80k_1m.sql
+  # hc100midle: hc100m, plus IDLE_SESSIONS sessions holding references to
+  # entries another backend created: before the churn, one session creates
+  # IDLE_SESSIONS * IDLE_STMTS entries, then each idle session runs
+  # IDLE_STMTS of them and stays idle, connected, for the rest of the run
+  # hc100midlenp: the same, the idle sessions only PREPARE the statements,
+  # with track_utility off: references with nothing pending
+  [ $MODE = hc100midle ] && SQL=$REPO/pgbench_hot_cold_4000_100m.sql
+  [ $MODE = hc100midlenp ] && SQL=$REPO/pgbench_hot_cold_4000_100m.sql
   pgbench -n -M simple -c $CL -j 32 -T 20 -f $SQL >/dev/null 2>&1
   psql -qXc 'SELECT pg_stat_statements_reset()' >/dev/null
   date +%s > $OUT/measured_since
+  IDLE_PIDS=
+  if [ $MODE = hc100midle ] || [ $MODE = hc100midlenp ]; then
+    NS=${IDLE_SESSIONS:-20}; NQ=${IDLE_STMTS:-200}
+    for s in $(seq 1 $NS); do for i in $(seq 1 $NQ); do
+      echo "WITH CTEIDLE_${s}_$i AS MATERIALIZED (SELECT 1 AS v) SELECT v FROM CTEIDLE_${s}_$i;"
+    done; done | psql -qXAt >/dev/null 2>>$OUT/idle.err
+    rm -f $OUT/idle_ready_*
+    for s in $(seq 1 $NS); do
+      ( [ $MODE = hc100midlenp ] && echo "SET pg_stat_statements.track_utility = off;"
+        for i in $(seq 1 $NQ); do
+          q="WITH CTEIDLE_${s}_$i AS MATERIALIZED (SELECT 1 AS v) SELECT v FROM CTEIDLE_${s}_$i"
+          if [ $MODE = hc100midlenp ]; then echo "PREPARE p$i AS $q;"; else echo "$q;"; fi
+        done
+        echo "\\! touch $OUT/idle_ready_$s"
+        exec sleep $((SECS + 60)) ) | psql -qXAt >/dev/null 2>>$OUT/idle.err &
+      IDLE_PIDS="$IDLE_PIDS $!"
+    done
+    for t in $(seq 1 60); do [ $(ls $OUT/idle_ready_* 2>/dev/null | wc -l) -ge $NS ] && break; sleep 0.5; done
+    # The idle entries before the churn, for the record
+    psql -AtXc "SELECT count(*) FROM pg_stat_statements WHERE query LIKE 'WITH CTEIDLE_%'" > $OUT/idle_entries 2>&1
+  fi
   pgbench -n -M simple -P 10 -c $CL -j 32 -T $SECS -f $SQL >$OUT/pgbench.log 2>&1
+  # End the idle sessions: their sleep ends, psql reads end of file
+  [ -n "$IDLE_PIDS" ] && pkill -f "^sleep $((SECS + 60))$" 2>/dev/null
 fi
 kill $SAMP $SAMP2 $SAMP3 2>/dev/null
 EC=$(awk -v cap=$((2*MAX)) 'NF {if ($1>m) m=$1; s+=$1; n++; if ($1>=cap) c++} END {if (n) printf "max=%d avg=%.0f backstop=%.0f%%", m, s/n, 100*c/n; else print "n/a"}' $OUT/entry_count.txt)

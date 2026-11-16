@@ -27,7 +27,7 @@ import statistics
 import sys
 
 AGES = ('1:<1s', '2:1-10s', '3:10s-1min', '4:1-5min', '5:>5min')
-WL = {'hotcold_4000_100m': 'hc100m', 'hotcold_4000_1500': 'hc1500',
+WL = {'hotcold_4000_100m': 'hc100m', 'hotcold_4000_1500': 'hc1500', 'hotcold_4000_50k': 'hc50k',
       'select_only': 'sel', 'trickle_5000': 'trickle'}
 
 
@@ -136,6 +136,9 @@ def local(files, labels):
         for line in lines(fn):
             if not line[0].startswith('inst-') or len(line) < 5:
                 continue
+            # A failed run, such as a server that did not start, has no TPS
+            if not re.fullmatch(r'[\d.]+', line[4]):
+                continue
             kv = dict(re.findall(r'(\w+)=([\d.]+)', ' '.join(line[5:])))
             b, w, c = line[0], line[1], int(line[2][1:])
             v, r = kv.get('vcpus', env.get('vcpus', '?')), kv.get('rep')
@@ -238,7 +241,7 @@ def markdown(pts, title, meta):
             "TPS of each patch build against upstream, and its TPS trend: the mean",
             "TPS of the last fifth of the run against the first fifth (0% is",
             "sustained, negative is falling as the run goes on).", ""]
-    for w in ('hc100m', 'hc1500', 'sel', 'trickle'):
+    for w in ('hc100m', 'hc1500', 'hc50k', 'sel', 'trickle'):
         ks = [(k, n) for k, n in points(pts) if k[1] == w]
         if not ks:
             continue
