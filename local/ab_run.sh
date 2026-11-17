@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One run: a fresh cluster of <build>, a workload, then the result line.
 # usage: ab_run.sh <build> <hc100m|hc100midle|hc100midlenp|hc1500|hc50k|hc80k100m|hc80k1m|sel> <clients> <seconds> <max>
+# MINMAX_RESET_SECS=<n>: reset min/max of all entries every n s while measuring
 set -uo pipefail
 . "$(dirname "$(readlink -f "$0")")/common.sh"
 BUILD=$1; MODE=$2; CL=$3; SECS=$4; MAX=$5
@@ -42,10 +43,22 @@ SAMP2=$!
       GROUP BY 1, 2, 3" 2>/dev/null
   done ) > $OUT/age.txt &
 SAMP3=$!
+# With MINMAX_RESET_SECS, reset the min/max values of all entries every
+# MINMAX_RESET_SECS seconds during the measured phase, as monitoring tools do
+start_minmax_resets() {
+  RESETS=
+  [ -n "${MINMAX_RESET_SECS:-}" ] || return
+  ( while sleep $MINMAX_RESET_SECS; do
+      PGOPTIONS='-c pg_stat_statements.track=none' psql -AtXc "SELECT pg_stat_statements_reset(0, 0, 0, true)" >/dev/null 2>&1
+      date +%s
+    done ) > $OUT/minmax_resets.txt &
+  RESETS=$!
+}
 if [ $MODE = sel ]; then
   pgbench -i -s 10 >/dev/null 2>&1
   pgbench -n -M prepared -c 32 -j 32 -T 15 -S >/dev/null 2>&1
   date +%s > $OUT/measured_since
+  start_minmax_resets
   pgbench -n -M prepared -P 10 -c $CL -j 32 -T $SECS -S >$OUT/pgbench.log 2>&1
 else
   SQL=$REPO/pgbench_hot_cold_4000_1500.sql
@@ -86,11 +99,12 @@ else
     # The idle entries before the churn, for the record
     psql -AtXc "SELECT count(*) FROM pg_stat_statements WHERE query LIKE 'WITH CTEIDLE_%'" > $OUT/idle_entries 2>&1
   fi
+  start_minmax_resets
   pgbench -n -M simple -P 10 -c $CL -j 32 -T $SECS -f $SQL >$OUT/pgbench.log 2>&1
   # End the idle sessions: their sleep ends, psql reads end of file
   [ -n "$IDLE_PIDS" ] && pkill -f "^sleep $((SECS + 60))$" 2>/dev/null
 fi
-kill $SAMP $SAMP2 $SAMP3 2>/dev/null
+kill $SAMP $SAMP2 $SAMP3 $RESETS 2>/dev/null
 EC=$(awk -v cap=$((2*MAX)) 'NF {if ($1>m) m=$1; s+=$1; n++; if ($1>=cap) c++} END {if (n) printf "max=%d avg=%.0f backstop=%.0f%%", m, s/n, 100*c/n; else print "n/a"}' $OUT/entry_count.txt)
 # Samples of the measured phase, from 10 s after the reset, when the view
 # holds the popular statements again
