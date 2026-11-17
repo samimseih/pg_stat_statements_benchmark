@@ -2,6 +2,7 @@
 # One run: a fresh cluster of <build>, a workload, then the result line.
 # usage: ab_run.sh <build> <hc100m|hc100midle|hc100midlenp|hc1500|hc50k|hc80k100m|hc80k1m|sel> <clients> <seconds> <max>
 # MINMAX_RESET_SECS=<n>: reset min/max of all entries every n s while measuring
+# PROGRESS_SECS=<n>: pgbench progress interval while measuring (default 10)
 set -uo pipefail
 . "$(dirname "$(readlink -f "$0")")/common.sh"
 BUILD=$1; MODE=$2; CL=$3; SECS=$4; MAX=$5
@@ -59,7 +60,7 @@ if [ $MODE = sel ]; then
   pgbench -n -M prepared -c 32 -j 32 -T 15 -S >/dev/null 2>&1
   date +%s > $OUT/measured_since
   start_minmax_resets
-  pgbench -n -M prepared -P 10 -c $CL -j 32 -T $SECS -S >$OUT/pgbench.log 2>&1
+  pgbench -n -M prepared -P ${PROGRESS_SECS:-10} -c $CL -j 32 -T $SECS -S >$OUT/pgbench.log 2>&1
 else
   SQL=$REPO/pgbench_hot_cold_4000_1500.sql
   [ $MODE = hc100m ] && SQL=$REPO/pgbench_hot_cold_4000_100m.sql
@@ -100,7 +101,7 @@ else
     psql -AtXc "SELECT count(*) FROM pg_stat_statements WHERE query LIKE 'WITH CTEIDLE_%'" > $OUT/idle_entries 2>&1
   fi
   start_minmax_resets
-  pgbench -n -M simple -P 10 -c $CL -j 32 -T $SECS -f $SQL >$OUT/pgbench.log 2>&1
+  pgbench -n -M simple -P ${PROGRESS_SECS:-10} -c $CL -j 32 -T $SECS -f $SQL >$OUT/pgbench.log 2>&1
   # End the idle sessions: their sleep ends, psql reads end of file
   [ -n "$IDLE_PIDS" ] && pkill -f "^sleep $((SECS + 60))$" 2>/dev/null
 fi

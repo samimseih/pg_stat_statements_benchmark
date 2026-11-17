@@ -12,6 +12,6 @@ for f in *_results.txt; do
     [ -d $a ] && continue
     grep -q "tps = $tps " $d/pgbench.log 2>/dev/null || continue
     mkdir -p $a
-    cp $d/pgbench.log $d/samples5.txt $d/entry_count.txt $d/age.txt $d/measured_since $a/ 2>/dev/null
+    cp $d/pgbench.log $d/samples5.txt $d/entry_count.txt $d/age.txt $d/measured_since $d/minmax_resets.txt $a/ 2>/dev/null
   done < $f
 done
