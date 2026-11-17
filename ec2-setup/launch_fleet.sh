@@ -13,7 +13,8 @@
 #
 # usage: BASE=<full hash> PATCH=<full hash> [EXTRA="<full hashes>"]
 #        [FLEET=<name>] [TYPES="c7i.8xlarge ..."] [CLIENTS="1 2 4 ..."]
-#        [SECS=180] [RUN100M=1] [RUN1500=1] [RUNSEL=1] [TRICKLE=0]
+#        [SECS=180] [RUN100M=1] [RUN1500=1] [RUN50K=0] [RUNSEL=1] [TRICKLE=0]
+#        [MINMAX_RESET_SECS=<n>, reset min/max every n s during each run]
 #        launch_fleet.sh
 # Run it detached; it returns when every type is done.  The fleet name is
 # written to state/current_fleet, its instances (type, instance id, attempt,
@@ -32,12 +33,14 @@ EXTRA=${EXTRA:-}
 CLIENTS=${CLIENTS:-"1 2 4 8 16 32 64 128 256 512"}
 common=(PATCH_COMMIT=$PATCH EXTRA_COMMITS="$EXTRA" BASE_COMMIT=$BASE
 	CLIENTS="$CLIENTS" SELECT_CLIENTS="$CLIENTS"
-	HOTCOLD_100M_CLIENTS="$CLIENTS" HOTCOLD_1500_CLIENTS="$CLIENTS"
+	HOTCOLD_100M_CLIENTS="$CLIENTS" HOTCOLD_1500_CLIENTS="$CLIENTS" HOTCOLD_50K_CLIENTS="$CLIENTS"
 	HOTCOLD_SECONDS=$SECS SELECT_SECONDS=$SECS TRICKLE_SECONDS=$SECS
 	RUN_HOTCOLD_4000_100M=${RUN100M:-1} RUN_HOTCOLD_4000_1500=${RUN1500:-1}
+	RUN_HOTCOLD_4000_50K=${RUN50K:-0}
 	RUN_SELECT_ONLY=${RUNSEL:-1} RUN_TRICKLE_5000=${TRICKLE:-0}
 	RUN_ORDER=interleaved MAX_CONNECTIONS=600
-	AUTO_SHUTDOWN=terminate SHUTDOWN_ON_FAILURE=1)
+	AUTO_SHUTDOWN=terminate SHUTDOWN_ON_FAILURE=1
+	MINMAX_RESET_SECS=${MINMAX_RESET_SECS:-})
 log() { echo "$(date -u +%FT%TZ) $*"; }
 
 # Does the route table have an active default route to the internet?

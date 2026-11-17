@@ -121,6 +121,7 @@ for env_file in "$STATE_DIR/$FLEET_ID"-*.env; do
     workloads=""
     [[ "${RUN_HOTCOLD_4000_100M:-1}" == 1 ]] && workloads+="hotcold_4000_100m "
     [[ "${RUN_HOTCOLD_4000_1500:-1}" == 1 ]] && workloads+="hotcold_4000_1500 "
+    [[ "${RUN_HOTCOLD_4000_50K:-0}" == 1 ]] && workloads+="hotcold_4000_50k "
     [[ "${RUN_SELECT_ONLY:-1}" == 1 ]] && workloads+="select_only "
     [[ "${RUN_TRICKLE_5000:-0}" == 1 ]] && workloads+="trickle_5000"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$vcpus" "$state" "$run_id" \

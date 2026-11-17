@@ -38,15 +38,21 @@ CLIENTS=(${CLIENTS:-1 2 4 8 16 32 64 128 256})
 SELECT_CLIENTS=(${SELECT_CLIENTS:-${CLIENTS[*]}})
 HOTCOLD_100M_CLIENTS=(${HOTCOLD_100M_CLIENTS:-${CLIENTS[*]}})
 HOTCOLD_1500_CLIENTS=(${HOTCOLD_1500_CLIENTS:-${CLIENTS[*]}})
+HOTCOLD_50K_CLIENTS=(${HOTCOLD_50K_CLIENTS:-${CLIENTS[*]}})
 MAX_THREADS="${MAX_THREADS:-32}"
 CPU_LIMIT="${CPU_LIMIT:-0}"
 CPU_SET="${CPU_SET:-}"
 CPU_SCRIPT="${CPU_SCRIPT:-$SCRIPT_DIR/set_cpus.sh}"
 PROGRESS_SECONDS="${PROGRESS_SECONDS:-2}"
+# With MINMAX_RESET_SECS, reset the min/max values of all entries every
+# MINMAX_RESET_SECS seconds during each run, as monitoring tools do
+MINMAX_RESET_SECS="${MINMAX_RESET_SECS:-}"
 PGSS_SAMPLE_SECONDS="${PGSS_SAMPLE_SECONDS:-5}"
 PGSS_SAMPLE_START_DELAY_SECONDS="${PGSS_SAMPLE_START_DELAY_SECONDS:-15}"
 RUN_HOTCOLD_4000_100M="${RUN_HOTCOLD_4000_100M:-1}"
 RUN_HOTCOLD_4000_1500="${RUN_HOTCOLD_4000_1500:-1}"
+# hotcold_4000_50k: 4000 popular statements and 50k others
+RUN_HOTCOLD_4000_50K="${RUN_HOTCOLD_4000_50K:-0}"
 RUN_SELECT_ONLY="${RUN_SELECT_ONLY:-1}"
 # trickle_5000: TRICKLE_RESIDENTS resident statements keep
 # pg_stat_statements.max full, while TRICKLE_BATCH new statements arrive every
@@ -549,6 +555,21 @@ start_trickle() {
   sampler_pids+=("$!")
 }
 
+# Reset min/max of all entries every MINMAX_RESET_SECS seconds, recording
+# the time of each reset in minmax_resets.txt
+start_minmax_resets() {
+  local outdir="$1"
+
+  (
+    while sleep "$MINMAX_RESET_SECS"; do
+      PGOPTIONS='-c pg_stat_statements.track=none' \
+        sql_at -c "select pg_stat_statements_reset(0, 0, 0, true)" >/dev/null 2>&1
+      date +%s
+    done
+  ) >"$outdir/minmax_resets.txt" 2>/dev/null &
+  sampler_pids+=("$!")
+}
+
 stop_samplers() {
   if ((${#sampler_pids[@]})); then
     kill "${sampler_pids[@]}" 2>/dev/null || true
@@ -913,6 +934,7 @@ run_pgbench_capture() {
   reset_pgss
   start_samplers "$outdir"
   [[ "$workload" == trickle_5000 ]] && start_trickle "$outdir"
+  [[ -n "$MINMAX_RESET_SECS" ]] && start_minmax_resets "$outdir"
   set +e
   "$@" -c "$clients" -j "$threads" -T "$duration" "$PGDATABASE" >"$outdir/pgbench.log" 2>&1
   status="$?"
@@ -936,6 +958,7 @@ run_hotcold_ladder() {
   local -a list=("${HOTCOLD_100M_CLIENTS[@]}")
 
   [[ "$workload" == hotcold_4000_1500 ]] && list=("${HOTCOLD_1500_CLIENTS[@]}")
+  [[ "$workload" == hotcold_4000_50k ]] && list=("${HOTCOLD_50K_CLIENTS[@]}")
   for clients in "${list[@]}"; do
     echo "==> $commit $workload clients=$clients"
     run_pgbench_capture "$commit" "$workload" "$clients" "$HOTCOLD_SECONDS" \
@@ -1013,11 +1036,13 @@ interleaved_clients() {
 
   if [[ "$CLIENT_ORDER" == listed ]]; then
     printf '%s\n' "${CLIENTS[@]}" "${HOTCOLD_100M_CLIENTS[@]}" \
-      "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" "${TRICKLE_CLIENTS[@]}" | awk '!seen[$0]++'
+      "${HOTCOLD_1500_CLIENTS[@]}" "${HOTCOLD_50K_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" \
+      "${TRICKLE_CLIENTS[@]}" | awk '!seen[$0]++'
     return
   fi
   mapfile -t sorted < <(printf '%s\n' "${HOTCOLD_100M_CLIENTS[@]}" \
-    "${HOTCOLD_1500_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" "${TRICKLE_CLIENTS[@]}" | sort -nu)
+    "${HOTCOLD_1500_CLIENTS[@]}" "${HOTCOLD_50K_CLIENTS[@]}" "${SELECT_CLIENTS[@]}" \
+    "${TRICKLE_CLIENTS[@]}" | sort -nu)
   if [[ "$CLIENT_ORDER" != outside_in ]]; then
     printf '%s\n' "${sorted[@]}"
     return
@@ -1048,6 +1073,11 @@ run_interleaved() {
           " ${HOTCOLD_1500_CLIENTS[*]} " == *" $clients "* ]]; then
       run_interleaved_hotcold_point hotcold_4000_1500 \
         "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql" "$clients"
+    fi
+    if [[ "$RUN_HOTCOLD_4000_50K" == "1" &&
+          " ${HOTCOLD_50K_CLIENTS[*]} " == *" $clients "* ]]; then
+      run_interleaved_hotcold_point hotcold_4000_50k \
+        "$SCRIPT_DIR/pgbench_hot_cold_4000_50k.sql" "$clients"
     fi
     if [[ "$RUN_SELECT_ONLY" == "1" && " ${SELECT_CLIENTS[*]} " == *" $clients "* ]]; then
       run_interleaved_select_only_point "$clients"
@@ -1089,6 +1119,9 @@ run_commit_major() {
     fi
     if [[ "$RUN_HOTCOLD_4000_1500" == "1" ]]; then
       run_hotcold_ladder "$short_commit" hotcold_4000_1500 "$SCRIPT_DIR/pgbench_hot_cold_4000_1500.sql"
+    fi
+    if [[ "$RUN_HOTCOLD_4000_50K" == "1" ]]; then
+      run_hotcold_ladder "$short_commit" hotcold_4000_50k "$SCRIPT_DIR/pgbench_hot_cold_4000_50k.sql"
     fi
     if [[ "$RUN_SELECT_ONLY" == "1" ]]; then
       run_select_only_ladder "$short_commit"
